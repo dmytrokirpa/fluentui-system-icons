@@ -45,7 +45,6 @@
       },
       "standalone": {
         "projects": [
-          "packages/react-icons-tooling-core",
           "packages/react-icons-atomic-webpack-loader",
           "packages/react-icons-svg-sprite-subsetting-webpack-plugin",
           "packages/react-icons-file-type",

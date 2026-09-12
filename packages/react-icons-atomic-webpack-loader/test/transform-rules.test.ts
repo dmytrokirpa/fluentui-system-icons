@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { transformSource } from '../src/rewrite';
+import { transformSource } from '../src/transform';
 
 describe('transformSource variantRules + import queries', () => {
   it('leaves existing svg rewrites unchanged when no rules are set', () => {

@@ -17,8 +17,6 @@ import {
   groupSymbols,
   injectIntoBody,
   injectIntoHead,
-  isNormalModule,
-  isRspack,
   mergeSprites,
   parseSpriteGroupFromQuery,
   resolveSpriteFilename,
@@ -28,7 +26,8 @@ import {
   spriteUrlPlaceholder,
   stripXmlDeclaration,
   subsetSpriteSvg,
-} from '@fluentui/react-icons-tooling-core';
+} from './sprites';
+import type { SharedSymbolsPolicy, SpriteGroupOptions, SvgSpriteOptimizationMode } from './sprites';
 import type {
   BundlerCompilation,
   BundlerCompiler,
@@ -38,10 +37,8 @@ import type {
   BundlerNormalModuleFactory,
   BundlerPlugin,
   BundlerResolveData,
-  SharedSymbolsPolicy,
-  SpriteGroupOptions,
-  SvgSpriteOptimizationMode,
-} from '@fluentui/react-icons-tooling-core';
+} from './bundler-api';
+import { isNormalModule, isRspack } from './bundler-api';
 
 import optionsSchema from './options.schema.json';
 

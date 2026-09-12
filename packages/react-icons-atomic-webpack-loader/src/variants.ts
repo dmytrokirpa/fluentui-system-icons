@@ -1,8 +1,8 @@
 import { realpathSync } from 'fs';
 import { dirname } from 'path';
 
-import { DEFAULT_SAFETY_VARIANT } from '../rewrite/modules';
-import type { IconVariant } from '../rewrite/modules';
+import { DEFAULT_SAFETY_VARIANT } from './modules';
+import type { IconVariant } from './modules';
 
 export const ICON_VARIANTS: readonly IconVariant[] = ['svg', 'fonts', 'svg-sprite'];
 

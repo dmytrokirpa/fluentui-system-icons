@@ -5,11 +5,9 @@ import {
   codepointsToSubsetText,
   getFontAssetsAndCodepoints,
   getTargetFormat,
-  isNormalModule,
-  isRspack,
   subsetFontAsset,
-} from '@fluentui/react-icons-tooling-core';
-import type { FontAssetCodepoints } from '@fluentui/react-icons-tooling-core';
+} from './fonts';
+import type { FontAssetCodepoints } from './fonts';
 import type {
   BundlerCompilation,
   BundlerCompiler,
@@ -19,6 +17,7 @@ import type {
   BundlerPlugin,
   BundlerRawSource,
 } from './bundler-api';
+import { isNormalModule, isRspack } from './bundler-api';
 
 export type * from './bundler-api';
 

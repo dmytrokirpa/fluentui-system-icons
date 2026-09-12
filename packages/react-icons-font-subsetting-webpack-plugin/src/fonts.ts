@@ -2,7 +2,7 @@ import { extname, resolve } from 'path';
 import { readFile } from 'fs/promises';
 import subsetFont from 'subset-font';
 
-import type { BundlerAsset, BundlerCompilation } from '../bundler-api';
+import type { BundlerAsset, BundlerCompilation } from './bundler-api';
 
 export const FONT_FILES_BASE_NAMES = [
   'FluentSystemIcons-Filled',

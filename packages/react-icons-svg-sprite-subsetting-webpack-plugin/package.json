@@ -4,7 +4,7 @@
   "description": "Webpack plugin to subset or merge SVG sprite assets used by @fluentui/react-icons svg-sprite APIs.",
   "main": "lib/index.js",
   "scripts": {
-    "test": "yarn test:validation && node test/run.js --bundler all",
+    "test": "yarn run -T vitest run && yarn test:validation && node test/run.js --bundler all",
     "test:atomic": "yarn run -T webpack -c test/webpack.config.js",
     "test:merged": "SVG_SPRITE_MODE=merged SVG_SPRITE_MERGED_FILENAME='fluentui-react-icons.[contenthash].svg' yarn run -T webpack -c test/webpack.config.js",
     "test:manifest": "SVG_SPRITE_MANIFEST=1 yarn run -T webpack -c test/webpack.config.js",
@@ -32,7 +32,6 @@
   },
   "homepage": "https://github.com/microsoft/fluentui-system-icons/tree/main/packages/react-icons-svg-sprite-subsetting-webpack-plugin#readme",
   "dependencies": {
-    "@fluentui/react-icons-tooling-core": "*",
     "schema-utils": "^4.2.0"
   },
   "devDependencies": {

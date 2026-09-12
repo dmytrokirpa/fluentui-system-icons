@@ -6,7 +6,7 @@ No single icon rendering mode fits every surface, and no single sprite fits ever
 
 ## 2. What we shipped
 
-One shared core. Sprite subsetting on **rspack** as well as webpack. Rendering mode and sprite group are a **per-rule** choice in the build config:
+The existing loader and two plugins (no extra published package). Sprite subsetting on **rspack** as well as webpack. Rendering mode and sprite group are a **per-rule** choice in the build config:
 
 - fonts in the grid
 - a critical sprite inlined for the toolbar

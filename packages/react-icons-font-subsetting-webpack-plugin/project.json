@@ -11,11 +11,7 @@
       "outputs": ["{projectRoot}/lib"]
     },
     "test": {
-      "dependsOn": [
-        "build",
-        { "projects": ["react-icons-tooling-core"], "target": "build" },
-        { "projects": ["react-icons-atomic-webpack-loader"], "target": "build" }
-      ]
+      "dependsOn": ["build", { "projects": ["react-icons-atomic-webpack-loader"], "target": "build" }]
     }
   }
 }

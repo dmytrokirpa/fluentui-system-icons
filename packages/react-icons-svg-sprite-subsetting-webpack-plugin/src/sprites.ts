@@ -2,8 +2,9 @@ import { createHash } from 'crypto';
 import { dirname, resolve } from 'path';
 import { readFileSync } from 'fs';
 
-import type { BundlerCompilation, BundlerCompiler } from '../bundler-api';
-import { DEFAULT_SPRITE_GROUP } from '../variants';
+import type { BundlerCompilation, BundlerCompiler } from './bundler-api';
+
+export const DEFAULT_SPRITE_GROUP = 'main';
 
 /** Matches individual `<symbol>` elements and captures their `id` attribute. */
 export const SYMBOL_ELEMENT_PATTERN = /<symbol\b[^>]*\bid="([^"]+)"[^>]*>[\s\S]*?<\/symbol>/g;

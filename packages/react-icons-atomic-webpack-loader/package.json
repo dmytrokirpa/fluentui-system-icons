@@ -24,7 +24,8 @@
     "url": "https://github.com/microsoft/fluentui-system-icons/issues"
   },
   "dependencies": {
-    "@fluentui/react-icons-tooling-core": "*"
+    "magic-string": "^0.30.0",
+    "oxc-parser": "^0.125.0"
   },
   "devDependencies": {
     "@fluentui/react-icons": "*"

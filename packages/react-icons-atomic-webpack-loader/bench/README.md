@@ -22,13 +22,12 @@ FCP / LCP / Lighthouse and Playwright DOM-node counts are optional follow-up (`P
 ## 60-second demo
 
 ```sh
-yarn nx run react-icons-tooling-core:build
 yarn nx run react-icons-atomic-webpack-loader:build
 yarn nx run react-icons-svg-sprite-subsetting-webpack-plugin:build
-node packages/react-icons-tooling-core/bench/run.js --bundler webpack --profile mixed
+node packages/react-icons-atomic-webpack-loader/bench/run.js --bundler webpack --profile mixed
 ```
 
-Then serve `packages/react-icons-tooling-core/bench/dist/webpack-mixed` and:
+Then serve `packages/react-icons-atomic-webpack-loader/bench/dist/webpack-mixed` and:
 
 1. Toolbar uses the critical inlined sprite (hover fill).
 2. Hero uses inline SVG (`primaryFill`).

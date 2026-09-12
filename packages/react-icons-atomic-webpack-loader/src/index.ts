@@ -1,5 +1,7 @@
-import { SUPPORTED_MODULE_NAMES, transformSource } from '@fluentui/react-icons-tooling-core';
-import type { IconVariant, VariantRule } from '@fluentui/react-icons-tooling-core';
+import { transformSource } from './transform';
+import { SUPPORTED_MODULE_NAMES } from './modules';
+import type { IconVariant } from './modules';
+import type { VariantRule } from './variants';
 import type { AtomicLoaderContext } from './loader-context';
 
 export type { IconVariant, VariantRule };

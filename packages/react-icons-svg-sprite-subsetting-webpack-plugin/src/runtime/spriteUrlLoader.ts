@@ -8,7 +8,7 @@
  * replaces with the emitted filename once the content hash is known.
  */
 
-import { spriteUrlPlaceholder } from '@fluentui/react-icons-tooling-core';
+import { spriteUrlPlaceholder } from '../sprites';
 
 interface SpriteUrlLoaderContext {
   resourceQuery: string;

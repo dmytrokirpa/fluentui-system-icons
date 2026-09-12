@@ -404,3 +404,7 @@ For any of these the loader leaves your code as-is and emits the standard
 - `@fluentui/react-icons` >= 2 (with atomic subpath exports)
 - `@fluentui/react-brand-icons` (with atomic subpath exports), if used
   - `>= 2.0.206` when using `headless: true` — earlier versions do not ship the `/headless/svg/*` and `/headless/utils` entries, so the loader's rewritten imports will fail to resolve.
+
+## Demo / bench
+
+Mixed-mode and split-sprite size numbers live in [`bench/`](./bench/README.md). That harness uses this loader plus the font and SVG-sprite plugins; those three packages stay independent (no shared published core).

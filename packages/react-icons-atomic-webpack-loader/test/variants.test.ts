@@ -57,11 +57,15 @@ describe('matchRuleCondition / findMatchingRule', () => {
   });
 
   it('matches files inside a named package from an app-level config', () => {
-    const pkgRoot = dirname(require.resolve('@fluentui/react-icons-tooling-core/package.json'));
+    const pkgRoot = dirname(require.resolve('@fluentui/react-icons-atomic-webpack-loader/package.json'));
     const viaResolve = join(pkgRoot, 'src', 'index.ts');
     const viaSourceTree = join(__dirname, '../src/index.ts');
     const rules = [
-      { package: '@fluentui/react-icons-tooling-core', iconVariant: 'svg-sprite' as const, sprite: 'critical' },
+      {
+        package: '@fluentui/react-icons-atomic-webpack-loader',
+        iconVariant: 'svg-sprite' as const,
+        sprite: 'critical',
+      },
     ];
     expect(findMatchingRule(viaResolve, rules)?.sprite).toBe('critical');
     expect(findMatchingRule(viaSourceTree, rules)?.sprite).toBe('critical');
