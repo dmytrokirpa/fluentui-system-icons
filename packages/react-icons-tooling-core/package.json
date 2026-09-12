@@ -1,0 +1,41 @@
+{
+  "name": "@fluentui/react-icons-tooling-core",
+  "version": "0.0.1",
+  "description": "Shared, bundler-agnostic core for Fluent UI react-icons webpack/rspack tooling (atomic loader, font subsetting, SVG sprite subsetting).",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "require": "./lib/index.js",
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "yarn run -T tsc -p .",
+    "lint": "yarn run -T eslint package.json",
+    "test": "yarn run -T vitest run"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/microsoft/fluentui-system-icons.git",
+    "directory": "packages/react-icons-tooling-core"
+  },
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/microsoft/fluentui-system-icons/issues"
+  },
+  "homepage": "https://github.com/microsoft/fluentui-system-icons/tree/main/packages/react-icons-tooling-core#readme",
+  "dependencies": {
+    "magic-string": "^0.30.0",
+    "oxc-parser": "^0.125.0",
+    "subset-font": "^1.4.0"
+  },
+  "files": [
+    "lib/*"
+  ]
+}

@@ -30,6 +30,21 @@
           "required": ["mode"]
         }
       ]
+    },
+    "sprites": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "inline": { "type": "boolean" },
+          "prefetch": { "type": "boolean" },
+          "filename": { "type": "string" }
+        }
+      }
+    },
+    "sharedSymbols": {
+      "enum": ["duplicate", "hoist"]
     }
   }
 }

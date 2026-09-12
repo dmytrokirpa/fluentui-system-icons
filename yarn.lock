@@ -3901,8 +3901,7 @@ __metadata:
   resolution: "@fluentui/react-icons-atomic-webpack-loader@workspace:packages/react-icons-atomic-webpack-loader"
   dependencies:
     "@fluentui/react-icons": "npm:*"
-    magic-string: "npm:^0.30.0"
-    oxc-parser: "npm:^0.125.0"
+    "@fluentui/react-icons-tooling-core": "npm:*"
   peerDependencies:
     "@rspack/core": ">=2.0.0"
     webpack: ">=5.0.0"
@@ -3934,7 +3933,7 @@ __metadata:
   resolution: "@fluentui/react-icons-font-subsetting-webpack-plugin@workspace:packages/react-icons-font-subsetting-webpack-plugin"
   dependencies:
     "@fluentui/react-icons": "npm:*"
-    subset-font: "npm:^1.4.0"
+    "@fluentui/react-icons-tooling-core": "npm:*"
   peerDependencies:
     "@rspack/core": ">=2.0.0"
     webpack: ">=5.0.0"
@@ -3951,9 +3950,26 @@ __metadata:
   resolution: "@fluentui/react-icons-svg-sprite-subsetting-webpack-plugin@workspace:packages/react-icons-svg-sprite-subsetting-webpack-plugin"
   dependencies:
     "@fluentui/react-icons": "npm:*"
+    "@fluentui/react-icons-tooling-core": "npm:*"
     schema-utils: "npm:^4.2.0"
   peerDependencies:
+    "@rspack/core": ">=2.0.0"
     webpack: ">=5.0.0"
+  peerDependenciesMeta:
+    "@rspack/core":
+      optional: true
+    webpack:
+      optional: true
+  languageName: unknown
+  linkType: soft
+
+"@fluentui/react-icons-tooling-core@npm:*, @fluentui/react-icons-tooling-core@workspace:packages/react-icons-tooling-core":
+  version: 0.0.0-use.local
+  resolution: "@fluentui/react-icons-tooling-core@workspace:packages/react-icons-tooling-core"
+  dependencies:
+    magic-string: "npm:^0.30.0"
+    oxc-parser: "npm:^0.125.0"
+    subset-font: "npm:^1.4.0"
   languageName: unknown
   linkType: soft
 
