@@ -36,6 +36,15 @@ describe('matchRuleCondition / findMatchingRule', () => {
     expect(matchRuleCondition(/Toolbar/, '/src/Hero.tsx')).toBe(false);
   });
 
+  it('treats backslash and slash as the same path separator', () => {
+    const win = 'C:\\repo\\node_modules\\@myorg\\app-nav\\src\\Nav.tsx';
+    expect(matchRuleCondition('@myorg/app-nav', win)).toBe(true);
+    expect(matchRuleCondition(/@myorg\/app-nav/, win)).toBe(true);
+    expect(matchRuleCondition(/routes\/grid/, 'C:\\src\\routes\\grid\\page.tsx')).toBe(true);
+    expect(matchRuleCondition('C:\\repo\\packages\\app-nav', 'C:/repo/packages/app-nav/src/Nav.tsx')).toBe(true);
+    expect(matchRuleCondition(/@myorg\/app-nav/, '/repo/packages/app-shell/src/Nav.tsx')).toBe(false);
+  });
+
   it('honors exclude and first-match-wins', () => {
     const rules = [
       { test: /Toolbar/, iconVariant: 'svg-sprite' as const, sprite: 'critical' },

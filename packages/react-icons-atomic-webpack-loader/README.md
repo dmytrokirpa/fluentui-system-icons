@@ -220,13 +220,13 @@ Resolution order for each import:
       // Resolves the package from the file being transformed, so yarn/pnpm
       // layouts and webpack's symlink realpath (packages/app-nav) still match.
       { package: '@myorg/app-nav', iconVariant: 'svg-sprite', sprite: 'critical' },
-      { test: /[\\/]routes[\\/]grid[\\/]/, iconVariant: 'fonts' },
+      { test: /routes\/grid/, iconVariant: 'fonts' },
     ],
   },
 }
 ```
 
-Prefer `package` over a path regex like `/@myorg\/app-nav/` when the webpack config is at the app: that regex misses Windows separators and misses workspace packages once webpack realpaths `node_modules/@myorg/app-nav` to `packages/app-nav`.
+Prefer `package` over a path regex like `/@myorg\/app-nav/` when the webpack config is at the app: `test` / `include` / `exclude` treat `\` and `/` as the same separator, but a regex still misses workspace packages once webpack realpaths `node_modules/@myorg/app-nav` to `packages/app-nav`.
 
 Equivalent without `package` — pin the resolved directory in the config:
 

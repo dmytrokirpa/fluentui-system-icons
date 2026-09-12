@@ -12,6 +12,9 @@ export const DEFAULT_SPRITE_GROUP = 'main';
 /**
  * Webpack-like rule condition: a substring, a `RegExp`, a predicate, or an any-of list.
  * Functions are supported in-process; prefer `string` / `RegExp` so loader options stay serializable.
+ *
+ * `\` and `/` are treated as the same separator: `{ test: /@myorg\/app-nav/ }` matches a
+ * Windows `resourcePath` with backslashes.
  */
 export type RuleCondition = string | RegExp | ((resource: string) => boolean) | RuleCondition[];
 
@@ -82,16 +85,25 @@ export function isIconVariant(value: string | null | undefined): value is IconVa
 }
 
 export function matchRuleCondition(condition: RuleCondition, resource: string): boolean {
-  if (typeof condition === 'string') {
-    return resource.includes(condition);
-  }
-  if (condition instanceof RegExp) {
-    return condition.test(resource);
+  if (Array.isArray(condition)) {
+    return condition.some((entry) => matchRuleCondition(entry, resource));
   }
   if (typeof condition === 'function') {
-    return condition(resource);
+    return withPathForms(resource, (path) => condition(path));
   }
-  return condition.some((entry) => matchRuleCondition(entry, resource));
+  if (typeof condition === 'string') {
+    return withPathForms(resource, (path) => withPathForms(condition, (needle) => path.includes(needle)));
+  }
+  return withPathForms(resource, (path) => condition.test(path));
+}
+
+/** Tries `filePath` as written and with `\` folded to `/`. */
+function withPathForms(filePath: string, fn: (path: string) => boolean): boolean {
+  if (fn(filePath)) {
+    return true;
+  }
+  const normalized = normalizePath(filePath);
+  return normalized !== filePath && fn(normalized);
 }
 
 /**
