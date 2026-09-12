@@ -47,10 +47,13 @@ export interface FluentIconsAtomicImportLoaderOptions {
    */
   headless?: boolean;
   /**
-   * Per-file variant selection. The first rule whose `test` / `include` match
-   * `resourcePath` (and whose `exclude` does not) wins. Each rule may set
-   * `iconVariant`, `headless`, and a named `sprite` group (appended as
-   * `?sprite=` on svg-sprite atoms).
+   * Per-file variant selection. The first rule whose `test` / `include` /
+   * `package` match `resourcePath` (and whose `exclude` does not) wins. Each
+   * rule may set `iconVariant`, `headless`, and a named `sprite` group
+   * (appended as `?sprite=` on svg-sprite atoms).
+   *
+   * `package: '@myorg/app-nav'` targets every file inside that dependency from
+   * an app-level webpack config (see the README).
    *
    * Resolution order for a single import:
    * `?variant=` / `?sprite=` query → first matching rule → global `iconVariant`

@@ -1,3 +1,6 @@
+import { realpathSync } from 'fs';
+import { dirname } from 'path';
+
 import { DEFAULT_SAFETY_VARIANT } from '../rewrite/modules';
 import type { IconVariant } from '../rewrite/modules';
 
@@ -15,13 +18,21 @@ export type RuleCondition = string | RegExp | ((resource: string) => boolean) | 
 /**
  * A per-file rewrite rule. First match wins (see {@link findMatchingRule}).
  *
- * `test` / `include` / `exclude` are matched against the loader's `resourcePath`
- * (the file being transformed), the same way webpack module rules match.
+ * `test` / `include` / `exclude` / `package` are matched against the loader's
+ * `resourcePath` (the file being transformed), the same way webpack module rules
+ * match. The webpack config can live at the app; rules still target a dependency
+ * by `package` name (see {@link matchPackage}).
  */
 export interface VariantRule {
   test?: RuleCondition;
   include?: RuleCondition;
   exclude?: RuleCondition;
+  /**
+   * Package name whose files this rule applies to, e.g. `'@myorg/app-nav'`.
+   * Resolved from the file being transformed (follows yarn/pnpm/npm layouts and
+   * webpack's symlink realpath). `string[]` is any-of.
+   */
+  package?: string | string[];
   iconVariant?: IconVariant;
   headless?: boolean;
   /** Named sprite group. Only applied when the resolved variant is `svg-sprite`. */
@@ -85,8 +96,9 @@ export function matchRuleCondition(condition: RuleCondition, resource: string): 
 
 /**
  * Returns whether `resource` matches a single rule, following webpack's
- * `test` ∧ `include` ∧ ¬`exclude` semantics. A missing `test` / `include`
- * is treated as a match so a rule can be exclude-only or catch-all.
+ * `test` ∧ `include` ∧ `package` ∧ ¬`exclude` semantics. A missing `test` /
+ * `include` / `package` is treated as a match so a rule can be exclude-only
+ * or catch-all.
  */
 export function matchesRule(rule: VariantRule, resource: string): boolean {
   if (rule.test !== undefined && !matchRuleCondition(rule.test, resource)) {
@@ -95,10 +107,63 @@ export function matchesRule(rule: VariantRule, resource: string): boolean {
   if (rule.include !== undefined && !matchRuleCondition(rule.include, resource)) {
     return false;
   }
+  if (rule.package !== undefined && !matchPackage(rule.package, resource)) {
+    return false;
+  }
   if (rule.exclude !== undefined && matchRuleCondition(rule.exclude, resource)) {
     return false;
   }
   return true;
+}
+
+/**
+ * True when `resource` is a file inside `packageName` (or any name in the list).
+ *
+ * Resolves `packageName/package.json` from `resource`'s directory so an app-level
+ * webpack config can target `@myorg/app-nav` even when webpack realpaths a
+ * workspace symlink to `packages/app-nav`.
+ */
+export function matchPackage(packageName: string | string[], resource: string): boolean {
+  const names = Array.isArray(packageName) ? packageName : [packageName];
+  return names.some((name) => matchOnePackage(name, resource));
+}
+
+function matchOnePackage(packageName: string, resource: string): boolean {
+  let pkgJson: string;
+  try {
+    pkgJson = require.resolve(`${packageName}/package.json`, { paths: [dirname(resource)] });
+  } catch {
+    return false;
+  }
+
+  const roots = pathCandidates(dirname(pkgJson));
+  const files = pathCandidates(resource);
+  for (const file of files) {
+    for (const root of roots) {
+      if (file === root || file.startsWith(`${root}/`)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function pathCandidates(filePath: string): string[] {
+  const normalized = normalizePath(filePath);
+  const out = [normalized];
+  try {
+    const real = normalizePath(realpathSync(filePath));
+    if (real !== normalized) {
+      out.push(real);
+    }
+  } catch {
+    // resourcePath always exists for the loader; tests may pass a synthetic path.
+  }
+  return out;
+}
+
+function normalizePath(filePath: string): string {
+  return filePath.replace(/\\/g, '/');
 }
 
 /** First matching rule wins. Returns `undefined` when `rules` is empty or none match. */

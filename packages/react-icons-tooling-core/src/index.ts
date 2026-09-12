@@ -31,6 +31,7 @@ export {
   parseImportSpecifier,
   isIconVariant,
   matchRuleCondition,
+  matchPackage,
   matchesRule,
   findMatchingRule,
   resolveFileDefaults,

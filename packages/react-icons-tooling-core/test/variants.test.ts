@@ -1,3 +1,5 @@
+import { dirname, join } from 'path';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -43,6 +45,18 @@ describe('matchRuleCondition / findMatchingRule', () => {
     expect(findMatchingRule('/src/Toolbar.tsx', rules)?.sprite).toBe('critical');
     expect(findMatchingRule('/src/routes/grid.tsx', rules)?.iconVariant).toBe('fonts');
     expect(findMatchingRule('/src/other/grid.tsx', rules)?.iconVariant).toBe('svg');
+  });
+
+  it('matches files inside a named package from an app-level config', () => {
+    const pkgRoot = dirname(require.resolve('@fluentui/react-icons-tooling-core/package.json'));
+    const viaResolve = join(pkgRoot, 'src', 'index.ts');
+    const viaSourceTree = join(__dirname, '../src/index.ts');
+    const rules = [
+      { package: '@fluentui/react-icons-tooling-core', iconVariant: 'svg-sprite' as const, sprite: 'critical' },
+    ];
+    expect(findMatchingRule(viaResolve, rules)?.sprite).toBe('critical');
+    expect(findMatchingRule(viaSourceTree, rules)?.sprite).toBe('critical');
+    expect(findMatchingRule('/tmp/other-app/src/index.ts', rules)).toBeUndefined();
   });
 });
 
