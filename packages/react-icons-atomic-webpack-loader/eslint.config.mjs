@@ -6,6 +6,6 @@ import { dependencyChecks } from '../../eslint.config.base.mjs';
 export default [
   dependencyChecks({
     ignoredDependencies: ['@rspack/core', 'webpack'],
-    ignoredFiles: ['{projectRoot}/query.d.ts'],
+    ignoredFiles: ['{projectRoot}/query.d.ts', '{projectRoot}/bench/**/*'],
   }),
 ];
