@@ -14,6 +14,7 @@ import type { IconVariant, ModuleDescriptor } from './modules';
 import {
   appendSpriteQuery,
   isIconVariant,
+  isValidSpriteGroupName,
   parseImportSpecifier,
   resolveFileDefaults,
   resolveImportOverride,
@@ -158,7 +159,33 @@ export function transformSource(source: string, options: TransformOptions): Tran
         message: `ignored unknown icon variant query "${query.get('variant')}" on "${rawSpecifier}".`,
       });
     }
-    return resolveRequestedTarget(fileDefaults, override);
+
+    const requested = resolveRequestedTarget(fileDefaults, override);
+    if (requested.sprite === undefined) {
+      return requested;
+    }
+
+    if (!isValidSpriteGroupName(requested.sprite)) {
+      pushDiagnostic({
+        level: 'warning',
+        message:
+          `ignored sprite group "${requested.sprite}": group names become asset filenames, ` +
+          `so they may only contain letters, digits, "_" and "-".`,
+      });
+      return { ...requested, sprite: undefined };
+    }
+
+    if (requested.iconVariant !== 'svg-sprite') {
+      pushDiagnostic({
+        level: 'warning',
+        message:
+          `ignored sprite group "${requested.sprite}" on a "${requested.iconVariant}" import: ` +
+          `sprite groups only apply to the "svg-sprite" variant.`,
+      });
+      return { ...requested, sprite: undefined };
+    }
+
+    return requested;
   };
 
   const atomicSourceFor = (descriptor: ModuleDescriptor, importedName: string, target: ResolvedTarget): string => {

@@ -37,6 +37,29 @@ describe('transformSource variantRules + import queries', () => {
     expect(code).toBe(`import { AddFilled } from '@fluentui/react-icons/svg-sprite/add?sprite=grid';`);
   });
 
+  it('drops a sprite group that could escape the output directory', () => {
+    const { code, diagnostics } = transformSource(
+      `import { AddFilled } from '@fluentui/react-icons?variant=svg-sprite&sprite=../../pwned';`,
+      { iconVariant: 'svg', path: 'input.js' },
+    );
+    expect(code).toBe(`import { AddFilled } from '@fluentui/react-icons/svg-sprite/add';`);
+    expect(diagnostics).toEqual([
+      { level: 'warning', message: expect.stringContaining('ignored sprite group "../../pwned"') },
+    ]);
+  });
+
+  it('warns when a sprite group is set on a variant that has no sprites', () => {
+    const { code, diagnostics } = transformSource(`import { AddFilled } from '@fluentui/react-icons';`, {
+      iconVariant: 'svg',
+      path: '/app/src/Toolbar.tsx',
+      variantRules: [{ test: /Toolbar/, sprite: 'critical' }],
+    });
+    expect(code).toBe(`import { AddFilled } from '@fluentui/react-icons/svg/add';`);
+    expect(diagnostics).toEqual([
+      { level: 'warning', message: expect.stringContaining('only apply to the "svg-sprite" variant') },
+    ]);
+  });
+
   it('does not apply a later overlapping rule', () => {
     const { code } = transformSource(`import { AddFilled } from '@fluentui/react-icons';`, {
       iconVariant: 'svg',
