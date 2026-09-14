@@ -3953,7 +3953,13 @@ __metadata:
     "@fluentui/react-icons": "npm:*"
     schema-utils: "npm:^4.2.0"
   peerDependencies:
+    "@rspack/core": ">=2.0.0"
     webpack: ">=5.0.0"
+  peerDependenciesMeta:
+    "@rspack/core":
+      optional: true
+    webpack:
+      optional: true
   languageName: unknown
   linkType: soft
 

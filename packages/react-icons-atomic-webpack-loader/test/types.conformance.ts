@@ -22,4 +22,13 @@ type RspackContextConforms = AssertAssignable<
   rspack.LoaderContext<FluentIconsAtomicImportLoaderOptions>
 >;
 
-export type { WebpackContextConforms, RspackContextConforms };
+// The published `query.d.ts` shim has to make the opt-in import queries resolve. This is a
+// plain import rather than a type-level assertion because the failure mode it guards against
+// (the shim becoming a module, so its `declare module` blocks turn into augmentations) shows
+// up as `TS2307` on the import itself.
+import { AddFilled } from '@fluentui/react-icons?variant=svg-sprite&sprite=critical';
+import { CalendarFilled } from '@fluentui/react-icons?variant=fonts';
+
+type QueriedImportsResolve = AssertAssignable<typeof AddFilled, typeof CalendarFilled>;
+
+export type { WebpackContextConforms, RspackContextConforms, QueriedImportsResolve };

@@ -31,4 +31,22 @@ expectThrow('invalid merged filename placeholder', () => {
   });
 });
 
+expectThrow('invalid sprite group name', () => {
+  new FluentUIReactIconsSvgSpriteSubsettingPlugin({
+    sprites: { '../../pwned': { inline: false } },
+  });
+});
+
+expectThrow('invalid sprite group filename placeholder', () => {
+  new FluentUIReactIconsSvgSpriteSubsettingPlugin({
+    sprites: { critical: { filename: 'critical.[chunkhash].sprite.svg' } },
+  });
+});
+
+expectThrow('unknown option', () => {
+  new FluentUIReactIconsSvgSpriteSubsettingPlugin(
+    /** @type {any} */ ({ sharedSymbols: 'hoist' }),
+  );
+});
+
 console.log('svg-sprite subsetting validation tests passed');

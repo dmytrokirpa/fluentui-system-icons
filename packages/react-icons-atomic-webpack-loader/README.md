@@ -74,12 +74,13 @@ module.exports = {
 
 ## Options
 
-| Option                | Type                                   | Default     | Description                                                                             |
-| --------------------- | -------------------------------------- | ----------- | --------------------------------------------------------------------------------------- |
-| `iconVariant`         | `'svg'` \| `'fonts'` \| `'svg-sprite'` | `'svg'`     | Variant icons resolve to. Applied to every supported module.                            |
-| `fallbackVariant`     | `'svg'` \| `'fonts'` \| `'svg-sprite'` | `undefined` | Variant used for a module that does not support `iconVariant` (see below).              |
-| `headless`            | `boolean`                              | `false`     | Resolve to the headless (Griffel-free) build where the module ships one.                |
-| `allowDynamicImports` | `boolean`                              | `false`     | Atomize a narrow, statically-provable subset of dynamic `import()` barrels (see below). |
+| Option                | Type                                   | Default     | Description                                                                                                                      |
+| --------------------- | -------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `iconVariant`         | `'svg'` \| `'fonts'` \| `'svg-sprite'` | `'svg'`     | Variant icons resolve to. Applied to every supported module unless a rule or import query overrides it.                          |
+| `fallbackVariant`     | `'svg'` \| `'fonts'` \| `'svg-sprite'` | `undefined` | Variant used for a module that does not support `iconVariant` (see below).                                                       |
+| `headless`            | `boolean`                              | `false`     | Resolve to the headless (Griffel-free) build where the module ships one.                                                         |
+| `variantRules`        | `VariantRule[]`                        | `[]`        | Per-file variant / sprite-group selection. First match against `resourcePath` wins (`test` / `include` / `package` / `exclude`). |
+| `allowDynamicImports` | `boolean`                              | `false`     | Atomize a narrow, statically-provable subset of dynamic `import()` barrels (see below).                                          |
 
 ### Variant resolution & `fallbackVariant`
 
@@ -194,6 +195,79 @@ Notes:
 ```
 
 This changes icon resolution from `@fluentui/react-icons/svg/*` to `@fluentui/react-icons/svg-sprite/*`. Non-icon exports (`utils`, `providers`) are unaffected.
+
+## Mixing rendering modes and splitting sprites
+
+No single rendering mode fits every surface: inline SVG keeps `primaryFill` and hover, fonts win on large grids, and sprites win when many icons share a critical path. The loader can now pick a mode **per file** (and a named sprite group) from the webpack/rspack config, with no source change.
+
+Rules match the **file being transformed** (`resourcePath`), not where the webpack config lives. An app-level config can still target a specific package.
+
+Resolution order for each import:
+
+1. Opt-in import query (`?variant=` / `?sprite=` / `?headless=`)
+2. First matching `variantRules` entry (`test` / `include` / `package` / `exclude` against `resourcePath`)
+3. Global `iconVariant` / `headless`
+4. `fallbackVariant`
+5. `'svg'`
+
+```js
+{
+  loader: '@fluentui/react-icons-atomic-webpack-loader',
+  options: {
+    iconVariant: 'svg', // app default (hero, etc.)
+    variantRules: [
+      // Files inside @myorg/app-nav — works from the app webpack config.
+      // Resolves the package from the file being transformed, so yarn/pnpm
+      // layouts and webpack's symlink realpath (packages/app-nav) still match.
+      { package: '@myorg/app-nav', iconVariant: 'svg-sprite', sprite: 'critical' },
+      { test: /routes\/grid/, iconVariant: 'fonts' },
+    ],
+  },
+}
+```
+
+Prefer `package` over a path regex like `/@myorg\/app-nav/` when the webpack config is at the app: `test` / `include` / `exclude` treat `\` and `/` as the same separator, but a regex still misses workspace packages once webpack realpaths `node_modules/@myorg/app-nav` to `packages/app-nav`.
+
+`package` resolves the dependency from the directory of the file being transformed, falling back to the package's entry point when its `exports` map does not expose `./package.json`, and to the `node_modules/<name>/` path as a last resort. A package that cannot be resolved from that directory at all simply never matches, so check the name if a rule appears to do nothing.
+
+`sprite` names become asset filenames, so they may only contain letters, digits, `_` and `-`. A group set on a non-`svg-sprite` import is ignored with a warning.
+
+Equivalent without `package` — pin the resolved directory in the config:
+
+```js
+const path = require('path');
+const appNav = path.dirname(require.resolve('@myorg/app-nav/package.json'));
+
+{
+  loader: '@fluentui/react-icons-atomic-webpack-loader',
+  options: {
+    iconVariant: 'svg',
+    variantRules: [{ include: appNav, iconVariant: 'svg-sprite', sprite: 'critical' }],
+  },
+}
+```
+
+You can also split webpack `module.rules` with `include: appNav` and different loader `options`; `sprite` still belongs on `variantRules` (or a `?sprite=` query) because it is not a global option.
+
+The app-nav rewrite becomes `@fluentui/react-icons/svg-sprite/add?sprite=critical`. Pair this with `@fluentui/react-icons-svg-sprite-subsetting-webpack-plugin`'s `sprites` option so `critical` is inlined in `index.html` and a deferred group is a same-origin `<use href>` fetch.
+
+The query is part of the module request, so an icon pulled into two groups is bundled twice (once per group) and its `<symbol>` ships in both sprites. Keep an icon in a single group unless the split is worth those bytes.
+
+### Opt-in import queries
+
+When a one-off import must diverge from the file's rule:
+
+```ts
+import { AddFilled } from '@fluentui/react-icons?variant=svg-sprite&sprite=critical';
+```
+
+TypeScript: add the optional shim
+
+```ts
+/// <reference types="@fluentui/react-icons-atomic-webpack-loader/query" />
+```
+
+or list the package in `compilerOptions.types`.
 
 ## How it works
 

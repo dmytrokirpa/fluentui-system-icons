@@ -1,7 +1,13 @@
-import subsetFont from 'subset-font';
-import { extname, dirname, resolve } from 'path';
-import { readFile } from 'fs/promises';
+import { dirname, resolve } from 'path';
 
+import {
+  REACT_ICONS_FONT_MODULE_IMPORT_PATTERN,
+  codepointsToSubsetText,
+  getFontAssetsAndCodepoints,
+  getTargetFormat,
+  subsetFontAsset,
+} from './fonts';
+import type { FontAssetCodepoints } from './fonts';
 import type {
   BundlerCompilation,
   BundlerCompiler,
@@ -11,45 +17,20 @@ import type {
   BundlerPlugin,
   BundlerRawSource,
 } from './bundler-api';
+import { isNormalModule, isRspack } from './bundler-api';
 
 export type * from './bundler-api';
 
 const PLUGIN_NAME = 'FluentUIReactIconsFontSubsettingPlugin';
 
-const FONT_FILES_BASE_NAMES = [
-  'FluentSystemIcons-Filled',
-  'FluentSystemIcons-Resizable',
-  'FluentSystemIcons-Regular',
-  'FluentSystemIcons-Light',
-];
-
-const FONT_EXTENSIONS = ['.ttf', '.woff', '.woff2'];
-
 /** Separates "this module's icons are unknowable" from the benign "this module contributes nothing". */
 const UNRESOLVABLE_NAMESPACE_IMPORT = Symbol('unresolvable-namespace-import');
-
-/** An emitted font asset paired with the codepoint table of the package it came from. */
-interface FontAssetCodepoints {
-  assetName: string;
-  codepoints: Record<string, number>;
-}
 
 interface FontPackageUsage {
   outputRoots: Set<string>;
   usedExports: Set<string>;
   hasUnresolvableNamespace: boolean;
 }
-
-/**
- *  Match both chunk files and atomic font imports, for the standard (Griffel)
- *  and headless APIs:
- *  - lib/fonts/sizedIcons/chunk-0.js        (chunk-based, standard)
- *  - lib/atoms/fonts/access-time.js         (atomic imports, standard)
- *  - lib/atoms/headless-fonts/access-time.js (atomic imports, headless)
- *  - lib-cjs/atoms/fonts/access-time.cjs    (CommonJS output)
- */
-const REACT_ICONS_FONT_MODULE_IMPORT_PATTERN =
-  /react-icons[\/\\]lib(-cjs)?[\/\\](fonts[\/\\](sizedIcons|icons)[\/\\]chunk-\d+|atoms[\/\\](headless-)?fonts[\/\\][\w-]+)\.c?js$/;
 
 export interface FluentUIReactIconsFontSubsettingPluginOptions {
   /**
@@ -229,10 +210,6 @@ function getRuntimeSpec(compiler: BundlerCompiler, compilation: BundlerCompilati
   return runtimes.size > 0 ? Array.from(runtimes) : Array.from(compilation.entrypoints.keys());
 }
 
-function isRspack(compiler: BundlerCompiler): boolean {
-  return 'rspack' in compiler;
-}
-
 async function optimizeFontAsset(
   codepointMap: Record<string, number>,
   usedExports: Set<string>,
@@ -240,14 +217,7 @@ async function optimizeFontAsset(
   assetName: string,
   RawSource: BundlerRawSource,
 ) {
-  // Build subset text from the used exports set (usually small) instead of scanning all glyphs
-  let subsetText = '';
-  for (const glyphName of usedExports) {
-    const codepoint = codepointMap[glyphName];
-    if (codepoint !== undefined) {
-      subsetText += String.fromCodePoint(codepoint);
-    }
-  }
+  const subsetText = codepointsToSubsetText(codepointMap, usedExports);
 
   const asset = compilation.getAsset(assetName);
   if (!asset) {
@@ -263,23 +233,8 @@ async function optimizeFontAsset(
   // rspack's `compilation.assets` is a read-only proxy, so writes must go through `updateAsset`.
   compilation.updateAsset(
     assetName,
-    new RawSource(
-      await subsetFont(source, subsetText, {
-        targetFormat: getTargetFormat(assetName),
-      }),
-    ),
+    new RawSource(await subsetFontAsset(source, subsetText, getTargetFormat(assetName))),
   );
-}
-
-function getTargetFormat(assetName: string) {
-  switch (extname(assetName)) {
-    case '.woff':
-      return 'woff';
-    case '.woff2':
-      return 'woff2';
-    default:
-      return 'sfnt';
-  }
 }
 
 /**
@@ -346,14 +301,6 @@ function resolveUsedIconExports(
   return Array.from(usedModuleExports);
 }
 
-/**
- * rspack modules are proxies over Rust objects and are never instances of webpack's `NormalModule`,
- * so presence of `resource` is used as the portable discriminator.
- */
-function isNormalModule(m: BundlerModule): m is BundlerNormalModule {
-  return typeof m.resource === 'string';
-}
-
 function isFluentUIReactFontChunk(m: BundlerModule): m is BundlerNormalModule {
   if (!isNormalModule(m)) {
     return false;
@@ -370,47 +317,4 @@ function isFluentUIReactFontChunk(m: BundlerModule): m is BundlerNormalModule {
   }
 
   return REACT_ICONS_FONT_MODULE_IMPORT_PATTERN.test(resource);
-}
-
-/**
- * Maps emitted font assets back to their codepoint tables.
- *
- * Assets are matched through `AssetInfo.sourceFilename` (the originating file, relative to the compiler
- * context) rather than the module's `buildInfo`, which rspack leaves empty for asset modules.
- */
-async function getFontAssetsAndCodepoints(
-  pkgLibPath: string,
-  compilation: BundlerCompilation,
-  context: string,
-): Promise<FontAssetCodepoints[]> {
-  const utilsFontsFolder = resolve(pkgLibPath, 'utils/fonts');
-  const codepoints: Record<string, Record<string, number>> = Object.fromEntries(
-    await Promise.all(
-      FONT_FILES_BASE_NAMES.map(async (fontBaseName) => [
-        fontBaseName,
-        JSON.parse(await readFile(resolve(utilsFontsFolder, `${fontBaseName}.json`), 'utf8')),
-      ]),
-    ),
-  );
-  const fontPaths = new Map<string, Record<string, number>>(
-    FONT_FILES_BASE_NAMES.flatMap((fontBaseName) =>
-      FONT_EXTENSIONS.map((ext) => [resolve(utilsFontsFolder, `${fontBaseName}${ext}`), codepoints[fontBaseName]]),
-    ),
-  );
-
-  const result: FontAssetCodepoints[] = [];
-
-  for (const { name: assetName, info } of compilation.getAssets()) {
-    const sourceFilename = info?.sourceFilename;
-    if (!sourceFilename) {
-      continue;
-    }
-
-    const codepointsForAsset = fontPaths.get(resolve(context, sourceFilename));
-    if (codepointsForAsset) {
-      result.push({ assetName, codepoints: codepointsForAsset });
-    }
-  }
-
-  return result;
 }

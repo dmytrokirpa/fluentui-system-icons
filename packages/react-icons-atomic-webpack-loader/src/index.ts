@@ -1,9 +1,10 @@
 import { transformSource } from './transform';
 import { SUPPORTED_MODULE_NAMES } from './modules';
 import type { IconVariant } from './modules';
+import type { VariantRule } from './variants';
 import type { AtomicLoaderContext } from './loader-context';
 
-export type { IconVariant };
+export type { IconVariant, VariantRule };
 export type { AtomicLoaderContext };
 
 export interface FluentIconsAtomicImportLoaderOptions {
@@ -18,6 +19,9 @@ export interface FluentIconsAtomicImportLoaderOptions {
    * icon font), so a `*Color` import under `iconVariant: 'fonts'` is rerouted to
    * a color-capable variant (`svg` / `svg-sprite`) following the same
    * `iconVariant → fallbackVariant → svg` precedence, with a warning.
+   *
+   * Overridden per file by the first matching {@link variantRules} entry, and per
+   * import by a `?variant=` resource query on the specifier.
    */
   iconVariant?: IconVariant;
   /**
@@ -44,6 +48,20 @@ export interface FluentIconsAtomicImportLoaderOptions {
    * `headless/fonts/styles.css` for font icons) in your app entry point.
    */
   headless?: boolean;
+  /**
+   * Per-file variant selection. The first rule whose `test` / `include` /
+   * `package` match `resourcePath` (and whose `exclude` does not) wins. Each
+   * rule may set `iconVariant`, `headless`, and a named `sprite` group
+   * (appended as `?sprite=` on svg-sprite atoms).
+   *
+   * `package: '@myorg/app-nav'` targets every file inside that dependency from
+   * an app-level webpack config (see the README).
+   *
+   * Resolution order for a single import:
+   * `?variant=` / `?sprite=` query → first matching rule → global `iconVariant`
+   * → `fallbackVariant` → `svg`.
+   */
+  variantRules?: VariantRule[];
   /**
    * Rewrite a **narrow, statically-provable** subset of dynamic `import()` barrel
    * calls into atomic dynamic imports. Defaults to `false`.
@@ -73,7 +91,13 @@ export default function fluentIconsAtomicImportLoader(this: AtomicLoaderContext,
     return this.callback(null, sourceCode);
   }
 
-  const { iconVariant = 'svg', fallbackVariant, headless = false, allowDynamicImports = false } = this.getOptions();
+  const {
+    iconVariant = 'svg',
+    fallbackVariant,
+    headless = false,
+    allowDynamicImports = false,
+    variantRules,
+  } = this.getOptions();
 
   let code: string;
   let map: ReturnType<typeof transformSource>['map'];
@@ -85,6 +109,7 @@ export default function fluentIconsAtomicImportLoader(this: AtomicLoaderContext,
       fallbackVariant,
       headless,
       allowDynamicImports,
+      variantRules,
       path: resourcePath,
     }));
   } catch (error) {

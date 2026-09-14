@@ -10,7 +10,7 @@
  * take a typed parameter instead of `unknown`. Conformance tests in the plugin packages fail to
  * compile if either bundler ever drifts out of these bounds.
  *
- * Copied into this package and `@fluentui/react-icons-svg-sprite-subsetting-webpack-plugin`
+ * Copied into this package and `@fluentui/react-icons-font-subsetting-webpack-plugin`
  * so neither plugin depends on the other. Keep the two copies aligned; this surface is too
  * small to justify a fourth published package.
  */

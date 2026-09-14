@@ -199,6 +199,26 @@ const entries = {
     mustInclude: ['@fluentui/react-icons/svg/add', '@fluentui/react-icons/svg/arrow-left'],
     mustExclude: ['"@fluentui/react-icons"'],
   },
+
+  'variant-rules-toolbar': {
+    src: './src/variant-rules-toolbar.js',
+    loaderOptions: {
+      iconVariant: 'svg',
+      variantRules: [{ test: /variant-rules-toolbar/, iconVariant: 'svg-sprite', sprite: 'critical' }],
+    },
+    mustInclude: [
+      '@fluentui/react-icons/svg-sprite/add?sprite=critical',
+      '@fluentui/react-icons/svg-sprite/arrow-left?sprite=critical',
+    ],
+    mustExclude: ['"@fluentui/react-icons"', '@fluentui/react-icons/svg/add'],
+  },
+
+  'variant-query': {
+    src: './src/variant-query.js',
+    loaderOptions: { iconVariant: 'svg' },
+    mustInclude: ['@fluentui/react-icons/fonts/add'],
+    mustExclude: ['"@fluentui/react-icons"', '@fluentui/react-icons/svg/add'],
+  },
 };
 
 /**

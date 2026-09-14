@@ -11,9 +11,19 @@ import {
   SUPPORTED_MODULE_NAMES,
 } from './modules';
 import type { IconVariant, ModuleDescriptor } from './modules';
+import {
+  appendSpriteQuery,
+  isIconVariant,
+  isValidSpriteGroupName,
+  parseImportSpecifier,
+  resolveFileDefaults,
+  resolveImportOverride,
+  resolveRequestedTarget,
+} from './variants';
+import type { VariantRule } from './variants';
 
-interface TransformOptions {
-  /** The requested icon variant. Applied to every supported module. */
+export interface TransformOptions {
+  /** The requested icon variant. Applied to every supported module unless a rule or import query overrides it. */
   iconVariant: IconVariant;
   /** The variant to fall back to when a module does not support `iconVariant`. */
   fallbackVariant?: IconVariant;
@@ -25,6 +35,11 @@ interface TransformOptions {
    * Defaults to `false`. Un-rewritable dynamic barrel imports still warn.
    */
   allowDynamicImports?: boolean;
+  /**
+   * Per-file rewrite rules. First match against `path` wins; see {@link VariantRule}.
+   * Import queries (`?variant=` / `?sprite=`) still override a matching rule.
+   */
+  variantRules?: VariantRule[];
   path: string;
 }
 
@@ -44,14 +59,15 @@ export interface TransformResult {
   diagnostics: Diagnostic[];
 }
 
-/** A module's resolved rewrite target: the icon variant and whether to use its headless build. */
-type ResolvedTarget = { variant: IconVariant; headless: boolean };
+/** A module's resolved rewrite target: the icon variant, headless flag, and optional sprite group. */
+type ResolvedTarget = { variant: IconVariant; headless: boolean; sprite?: string };
 
 /** One atom's worth of destructured specifiers, e.g. `{ source, specs: ['AddFilled', 'AddRegular'] }`. */
 type RewriteGroup = { source: string; specs: string[] };
 
 export function transformSource(source: string, options: TransformOptions): TransformResult {
-  const { iconVariant, fallbackVariant, headless = false, allowDynamicImports = false, path } = options;
+  const { iconVariant, fallbackVariant, headless = false, allowDynamicImports = false, variantRules, path } = options;
+  const fileDefaults = resolveFileDefaults(path, { iconVariant, headless, variantRules });
 
   const result = parseSync(path, source, {
     sourceType: 'module',
@@ -76,24 +92,27 @@ export function transformSource(source: string, options: TransformOptions): Tran
     diagnostics.push(diagnostic);
   };
 
-  // Resolve each referenced module at most once per color-ness: color icons may
-  // route to a different variant than their non-color siblings, so the cache key
-  // is `${name}:${isColor}`. Resolution stays O(#modules × 2) regardless of how
-  // many icons a file imports.
+  // Resolve each referenced module at most once per (color-ness, requested variant,
+  // headless, sprite group). Color icons may route to a different variant than their
+  // non-color siblings; import queries and per-file rules can also diverge.
   const resolvedTargets = new Map<string, ResolvedTarget | null>();
 
   /**
-   * Returns the target (variant + headless) to rewrite a single referenced
-   * import with, or `null` when the module could not be resolved (an error
-   * diagnostic has been recorded and the import should be left untouched).
+   * Returns the target (variant + headless + sprite group) to rewrite a single
+   * referenced import with, or `null` when the module could not be resolved (an
+   * error diagnostic has been recorded and the import should be left untouched).
    */
-  const targetFor = (descriptor: ModuleDescriptor, isColor: boolean): ResolvedTarget | null => {
-    const cacheKey = `${descriptor.name}:${isColor}`;
+  const targetFor = (
+    descriptor: ModuleDescriptor,
+    isColor: boolean,
+    requested: { iconVariant: IconVariant; headless: boolean; sprite?: string },
+  ): ResolvedTarget | null => {
+    const cacheKey = `${descriptor.name}:${isColor}:${requested.iconVariant}:${requested.headless}:${requested.sprite ?? ''}`;
     if (resolvedTargets.has(cacheKey)) {
       return resolvedTargets.get(cacheKey)!;
     }
 
-    const resolution = resolveModuleVariant(descriptor, iconVariant, fallbackVariant);
+    const resolution = resolveModuleVariant(descriptor, requested.iconVariant, fallbackVariant);
 
     if (resolution.warning) {
       pushDiagnostic({ level: 'warning', message: resolution.warning });
@@ -112,37 +131,85 @@ export function transformSource(source: string, options: TransformOptions): Tran
     // Color icons are SVG-only; reroute them off any color-less variant (fonts)
     // to a color-capable one, honoring the fallback precedence.
     if (isColor) {
-      const colorResolution = resolveColorVariant(descriptor, variant, iconVariant, fallbackVariant);
+      const colorResolution = resolveColorVariant(descriptor, variant, requested.iconVariant, fallbackVariant);
       if (colorResolution.warning) {
         pushDiagnostic({ level: 'warning', message: colorResolution.warning });
       }
       variant = colorResolution.variant;
     }
 
-    const headlessResolution = resolveModuleHeadless(descriptor, variant, headless);
+    const headlessResolution = resolveModuleHeadless(descriptor, variant, requested.headless);
     if (headlessResolution.warning) {
       pushDiagnostic({ level: 'warning', message: headlessResolution.warning });
     }
 
-    const target: ResolvedTarget = { variant, headless: headlessResolution.headless };
+    const target: ResolvedTarget = { variant, headless: headlessResolution.headless, sprite: requested.sprite };
     resolvedTargets.set(cacheKey, target);
     return target;
   };
 
+  const requestedForSpecifier = (
+    rawSpecifier: string,
+  ): { iconVariant: IconVariant; headless: boolean; sprite?: string } => {
+    const { query } = parseImportSpecifier(rawSpecifier);
+    const override = resolveImportOverride(query);
+    if (query.get('variant') && !isIconVariant(query.get('variant'))) {
+      pushDiagnostic({
+        level: 'warning',
+        message: `ignored unknown icon variant query "${query.get('variant')}" on "${rawSpecifier}".`,
+      });
+    }
+
+    const requested = resolveRequestedTarget(fileDefaults, override);
+    if (requested.sprite === undefined) {
+      return requested;
+    }
+
+    if (!isValidSpriteGroupName(requested.sprite)) {
+      pushDiagnostic({
+        level: 'warning',
+        message:
+          `ignored sprite group "${requested.sprite}": group names become asset filenames, ` +
+          `so they may only contain letters, digits, "_" and "-".`,
+      });
+      return { ...requested, sprite: undefined };
+    }
+
+    if (requested.iconVariant !== 'svg-sprite') {
+      pushDiagnostic({
+        level: 'warning',
+        message:
+          `ignored sprite group "${requested.sprite}" on a "${requested.iconVariant}" import: ` +
+          `sprite groups only apply to the "svg-sprite" variant.`,
+      });
+      return { ...requested, sprite: undefined };
+    }
+
+    return requested;
+  };
+
+  const atomicSourceFor = (descriptor: ModuleDescriptor, importedName: string, target: ResolvedTarget): string => {
+    const resolved = descriptor.resolve(importedName, target.variant, target.headless);
+    return appendSpriteQuery(resolved, target.sprite, target.variant);
+  };
+
   for (const imp of staticImports) {
-    const moduleName = imp.moduleRequest.value;
+    const rawSpecifier = imp.moduleRequest.value;
+    const { name: moduleName } = parseImportSpecifier(rawSpecifier);
     const descriptor = getModuleDescriptor(moduleName);
     if (!descriptor) continue;
 
     const namedEntries = imp.entries.filter((e) => e.importName.kind === 'Name');
     if (namedEntries.length === 0) continue;
 
+    const requested = requestedForSpecifier(rawSpecifier);
+
     // Resolve each named specifier independently — color icons may route to a
     // different variant than their non-color siblings in the same statement.
     const resolvedEntries = namedEntries.map((entry) => ({
       entry,
       importedName: entry.importName.name!,
-      target: targetFor(descriptor, isColorIconName(entry.importName.name!)),
+      target: targetFor(descriptor, isColorIconName(entry.importName.name!), requested),
     }));
 
     // A module-level resolution error is independent of color-ness, so if any
@@ -156,12 +223,12 @@ export function transformSource(source: string, options: TransformOptions): Tran
       const names = otherEntries
         .map((e) => (e.importName.kind === 'Default' ? e.localName.value : `* as ${e.localName.value}`))
         .join(', ');
-      lines.push(`import ${names} from '${moduleName}';`);
+      lines.push(`import ${names} from '${rawSpecifier}';`);
     }
 
     for (const { entry, importedName, target } of resolvedEntries) {
       const localName = entry.localName.value;
-      const newSource = descriptor.resolve(importedName, target!.variant, target!.headless);
+      const newSource = atomicSourceFor(descriptor, importedName, target!);
       const spec = importedName === localName ? importedName : `${importedName} as ${localName}`;
       lines.push(`import { ${spec} } from '${newSource}';`);
     }
@@ -171,7 +238,10 @@ export function transformSource(source: string, options: TransformOptions): Tran
 
   for (const exp of staticExports) {
     const relevantEntries = exp.entries.filter(
-      (e) => e.moduleRequest && getModuleDescriptor(e.moduleRequest.value) && e.exportName.kind === 'Name',
+      (e) =>
+        e.moduleRequest &&
+        getModuleDescriptor(parseImportSpecifier(e.moduleRequest.value).name) &&
+        e.exportName.kind === 'Name',
     );
     if (relevantEntries.length === 0) continue;
 
@@ -183,14 +253,15 @@ export function transformSource(source: string, options: TransformOptions): Tran
     const lines: string[] = [];
 
     for (const entry of relevantEntries) {
-      const moduleName = entry.moduleRequest!.value;
+      const rawSpecifier = entry.moduleRequest!.value;
+      const { name: moduleName } = parseImportSpecifier(rawSpecifier);
       const descriptor = getModuleDescriptor(moduleName)!;
       const importedName = entry.importName.name!;
-      const target = targetFor(descriptor, isColorIconName(importedName));
+      const target = targetFor(descriptor, isColorIconName(importedName), requestedForSpecifier(rawSpecifier));
       if (!target) continue;
 
       const exportedName = entry.exportName.name!;
-      const newSource = descriptor.resolve(importedName, target.variant, target.headless);
+      const newSource = atomicSourceFor(descriptor, importedName, target);
       const spec = importedName === exportedName ? importedName : `${importedName} as ${exportedName}`;
       lines.push(`export { ${spec} } from '${newSource}';`);
     }
@@ -219,10 +290,14 @@ export function transformSource(source: string, options: TransformOptions): Tran
      * // iconVariant: 'fonts'
      * resolveNameSource(reactIcons, 'AddFilled')   // → '@fluentui/react-icons/fonts/add'
      */
-    const resolveNameSource = (descriptor: ModuleDescriptor, importedName: string): string | null => {
-      const target = targetFor(descriptor, isColorIconName(importedName));
+    const resolveNameSource = (
+      descriptor: ModuleDescriptor,
+      importedName: string,
+      requested: { iconVariant: IconVariant; headless: boolean; sprite?: string },
+    ): string | null => {
+      const target = targetFor(descriptor, isColorIconName(importedName), requested);
       if (!target) return null;
-      return descriptor.resolve(importedName, target.variant, target.headless);
+      return atomicSourceFor(descriptor, importedName, target);
     };
 
     /**
@@ -249,7 +324,11 @@ export function transformSource(source: string, options: TransformOptions): Tran
      * @example
      * // `{ AddFilled, ...rest }`  → null   (rest element → bail)
      */
-    const buildGroups = (objectPattern: ObjectPattern, descriptor: ModuleDescriptor): RewriteGroup[] | null => {
+    const buildGroups = (
+      objectPattern: ObjectPattern,
+      descriptor: ModuleDescriptor,
+      requested: { iconVariant: IconVariant; headless: boolean; sprite?: string },
+    ): RewriteGroup[] | null => {
       const bySource = new Map<string, string[]>();
       const order: string[] = [];
 
@@ -259,7 +338,7 @@ export function transformSource(source: string, options: TransformOptions): Tran
 
         const importedName: string = prop.key.name;
         const localName: string = prop.value.name;
-        const resolvedSource = resolveNameSource(descriptor, importedName);
+        const resolvedSource = resolveNameSource(descriptor, importedName, requested);
         if (resolvedSource === null) return null;
 
         const spec = importedName === localName ? importedName : `${importedName}: ${localName}`;
@@ -298,10 +377,10 @@ export function transformSource(source: string, options: TransformOptions): Tran
         const importExpr = node.init.argument;
         if (importExpr.source.type !== 'Literal' || typeof importExpr.source.value !== 'string') return;
 
-        const descriptor = getModuleDescriptor(importExpr.source.value);
+        const descriptor = getModuleDescriptor(parseImportSpecifier(importExpr.source.value).name);
         if (!descriptor) return;
 
-        const groups = buildGroups(node.id, descriptor);
+        const groups = buildGroups(node.id, descriptor, requestedForSpecifier(importExpr.source.value));
         if (!groups) return;
 
         src.overwrite(node.start, node.end, `${patternText(groups)} = await ${importCallText(groups)}`);
@@ -323,7 +402,7 @@ export function transformSource(source: string, options: TransformOptions): Tran
         const importExpr = node.callee.object;
         if (importExpr.source.type !== 'Literal' || typeof importExpr.source.value !== 'string') return;
 
-        const descriptor = getModuleDescriptor(importExpr.source.value);
+        const descriptor = getModuleDescriptor(parseImportSpecifier(importExpr.source.value).name);
         if (!descriptor) return;
 
         const callback = node.arguments[0];
@@ -334,7 +413,7 @@ export function transformSource(source: string, options: TransformOptions): Tran
         const param = callback.params[0];
         if (param?.type !== 'ObjectPattern') return;
 
-        const groups = buildGroups(param, descriptor);
+        const groups = buildGroups(param, descriptor, requestedForSpecifier(importExpr.source.value));
         if (!groups) return;
 
         src.overwrite(importExpr.start, importExpr.end, importCallText(groups));
