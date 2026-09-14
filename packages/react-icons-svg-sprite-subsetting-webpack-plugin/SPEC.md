@@ -115,6 +115,10 @@ Dummy resource so the loader has something to attach to. The URL is an emitted a
 
 `?sprite=` on the atom module (from the loader's `variantRules` or an import query) selects a group. The plugin stamps that group onto the child `.svg` import so each group gets its own URL module instance. Inlined groups are written into HTML; deferred groups emit `[name].[contenthash].sprite.svg` and may get `<link rel="prefetch">`.
 
+Which groups get a merged sprite is read back from the module graph at asset time (the URL modules that exist, keyed by their `group` query) rather than from the resolve hook, so a watch rebuild that serves unchanged modules from cache still emits them. Groups without a URL module — the ungrouped imports of a build that mixes both — keep their own `.svg` assets and go through atomic subsetting instead.
+
+Because a group resolves to exactly one URL for all of its atoms, a symbol used from two groups is emitted in both. There is no "hoist into the inlined group" policy: the atoms of a deferred group cannot address the inlined document, so dropping the symbol from their sprite would leave them pointing at nothing.
+
 ## Options Validation
 
 Options are validated in two layers:
@@ -162,11 +166,13 @@ test/
 ├── webpack.config.js         # Configurable via env vars
 ├── rspack.config.js
 ├── run.js                    # webpack + rspack scenarios
+├── types.conformance.ts      # bundler interface drift protection
 ├── validation.js             # Constructor validation tests
 ├── src/
 │   ├── atomic.js             # Entry: imports BackpackFilled, CalculatorFilled
 │   ├── merged.js             # Entry: same imports
-│   └── groups.js             # ?sprite=critical and ?sprite=grid
+│   ├── groups.js             # ?sprite=critical and ?sprite=grid
+│   └── groups-mixed.js       # ?sprite=critical next to an ungrouped import
 └── __mock__/
     └── react-icons/lib/atoms/svg-sprite/
         ├── backpack.js       # 18 exports (various sizes/styles)
@@ -183,7 +189,9 @@ test/
 - **Reference injection:** HTML contains `<link rel="preload">` tags pointing to sprite assets.
 - **Manifest:** `sprites-manifest.json` is emitted with correct entrypoint/symbol structure.
 - **Named groups:** Critical sprite inlined in HTML; deferred `grid.[hash].sprite.svg` emitted with prefetch; bundle references the grid filename.
-- **Constructor:** Rejects invalid option combinations (e.g. `mergedSpriteFilename` in atomic mode, unsupported placeholders).
+- **Mixed groups:** With one `?sprite=` import and no `sprites` option, the grouped atom gets its own sprite while the ungrouped one is still subset in place and no unreferenced merged sprite is emitted.
+- **Constructor:** Rejects invalid option combinations (e.g. `mergedSpriteFilename` in atomic mode, unsupported placeholders, unusable group names).
+- **Types:** `test/types.conformance.ts` fails to compile if webpack or rspack drifts out of the bounds described in `src/bundler-api.ts`.
 
 ### Running tests
 
@@ -197,5 +205,6 @@ yarn test:merged      # merged mode build + validation
 yarn test:inline      # inline injection build + validation
 yarn test:reference   # reference injection build + validation
 yarn test:groups      # named sprite groups (critical inline + deferred grid)
+yarn test:types       # bundler type conformance
 yarn test:validation  # constructor validation
 ```

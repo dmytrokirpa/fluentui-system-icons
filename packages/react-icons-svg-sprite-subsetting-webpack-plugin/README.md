@@ -51,11 +51,19 @@ new FluentUIReactIconsSvgSpriteSubsettingPlugin({
     critical: { inline: true },
     '*': { inline: false, prefetch: true },
   },
-  sharedSymbols: 'duplicate', // default; 'hoist' drops inlined symbols from other groups
 });
 ```
 
 Imports without a `sprite` query land in the `main` group. Sprites must stay **same-origin** — browsers block cross-origin `<use href>`.
+
+Group names become asset filenames, so they may only contain letters, digits, `_` and `-`; an unusable name in a `?sprite=` query falls back to the `main` group.
+
+Notes on how groups interact with the rest of the build:
+
+- An icon used from two groups is emitted in **both**, and the plugin warns listing the ids. Every atom in a group resolves to that group's single sprite URL, so a symbol cannot be served to one group out of another group's file — keep shared icons in one group.
+- Setting `sprites` puts every sprite import through a group (ungrouped imports become `main`). Without `sprites`, only the imports that carry `?sprite=` are grouped and the rest keep their own subset `.svg` assets.
+- An `inline` group relies on its `<symbol>` elements being in the document, so it needs an HTML plugin. If a template never receives it, the build warns instead of silently rendering nothing.
+- Sprite filenames are substituted into the bundle after chunk hashing. Keep `optimization.realContentHash` on (webpack's production default) when JS filenames carry a hash, otherwise a JS file can keep its name while the sprite URL inside it changes. The plugin warns when that combination is detected.
 
 ## Options
 
@@ -69,7 +77,6 @@ You can pass a hash of configuration options to the plugin. Allowed values are a
 | **`generateSpritesManifest`**  | `{Boolean}`              | `false`       | If `true`, emits a `sprites-manifest.json` file containing entrypoint-level sprite usage information.                                                                                                                                                                                                                                     |
 | **`injectSpritesInTemplates`** | `{Boolean\|Object}`      | `false`       | Controls HTML injection of sprites via `html-webpack-plugin` or rspack's `HtmlRspackPlugin`. `false` disables injection. `true` is shorthand for `{ mode: 'inline' }`. `{ mode: 'inline' }` injects a merged inline `<svg>` at the start of `<body>`. `{ mode: 'reference' }` injects `<link rel="preload">` tags for used sprite assets. |
 | **`sprites`**                  | `{Object}`               | `undefined`   | Per-group emission. Keys are group names (`critical`, `grid`, `*`). Each value may set `inline`, `prefetch`, and `filename` (`[name]`, `[contenthash]`, `[fullhash]`).                                                                                                                                                                    |
-| **`sharedSymbols`**            | `{'duplicate'\|'hoist'}` | `'duplicate'` | When the same symbol is used in two groups, `'duplicate'` ships it in both (and warns). `'hoist'` drops it from non-inlined groups when it already lives in an inlined group.                                                                                                                                                             |
 
 ## Notes
 

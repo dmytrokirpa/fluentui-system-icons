@@ -228,6 +228,10 @@ Resolution order for each import:
 
 Prefer `package` over a path regex like `/@myorg\/app-nav/` when the webpack config is at the app: `test` / `include` / `exclude` treat `\` and `/` as the same separator, but a regex still misses workspace packages once webpack realpaths `node_modules/@myorg/app-nav` to `packages/app-nav`.
 
+`package` resolves the dependency from the directory of the file being transformed, falling back to the package's entry point when its `exports` map does not expose `./package.json`, and to the `node_modules/<name>/` path as a last resort. A package that cannot be resolved from that directory at all simply never matches, so check the name if a rule appears to do nothing.
+
+`sprite` names become asset filenames, so they may only contain letters, digits, `_` and `-`. A group set on a non-`svg-sprite` import is ignored with a warning.
+
 Equivalent without `package` — pin the resolved directory in the config:
 
 ```js
@@ -246,6 +250,8 @@ const appNav = path.dirname(require.resolve('@myorg/app-nav/package.json'));
 You can also split webpack `module.rules` with `include: appNav` and different loader `options`; `sprite` still belongs on `variantRules` (or a `?sprite=` query) because it is not a global option.
 
 The app-nav rewrite becomes `@fluentui/react-icons/svg-sprite/add?sprite=critical`. Pair this with `@fluentui/react-icons-svg-sprite-subsetting-webpack-plugin`'s `sprites` option so `critical` is inlined in `index.html` and a deferred group is a same-origin `<use href>` fetch.
+
+The query is part of the module request, so an icon pulled into two groups is bundled twice (once per group) and its `<symbol>` ships in both sprites. Keep an icon in a single group unless the split is worth those bytes.
 
 ### Opt-in import queries
 
@@ -404,7 +410,3 @@ For any of these the loader leaves your code as-is and emits the standard
 - `@fluentui/react-icons` >= 2 (with atomic subpath exports)
 - `@fluentui/react-brand-icons` (with atomic subpath exports), if used
   - `>= 2.0.206` when using `headless: true` — earlier versions do not ship the `/headless/svg/*` and `/headless/utils` entries, so the loader's rewritten imports will fail to resolve.
-
-## Demo / bench
-
-Mixed-mode and split-sprite size numbers live in [`bench/`](./bench/README.md). That harness uses this loader plus the font and SVG-sprite plugins; those three packages stay independent (no shared published core).
