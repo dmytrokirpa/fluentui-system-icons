@@ -10,5 +10,5 @@
     "moduleResolution": "bundler",
     "types": ["node"]
   },
-  "include": ["types.conformance.ts", "../src/**/*.ts"]
+  "include": ["types.conformance.ts", "../src/**/*.ts", "../query.d.ts"]
 }
