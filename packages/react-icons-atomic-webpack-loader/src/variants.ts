@@ -1,5 +1,5 @@
-import { realpathSync } from 'fs';
-import { dirname } from 'path';
+import { existsSync, readFileSync, realpathSync } from 'fs';
+import { dirname, join } from 'path';
 
 import { DEFAULT_SAFETY_VARIANT } from './modules';
 import type { IconVariant } from './modules';
@@ -8,6 +8,16 @@ export const ICON_VARIANTS: readonly IconVariant[] = ['svg', 'fonts', 'svg-sprit
 
 /** Group name used when an svg-sprite import has no `sprite` query or rule. */
 export const DEFAULT_SPRITE_GROUP = 'main';
+
+/**
+ * Mirrors the sprite plugin's rule: group names end up in emitted asset filenames, so
+ * anything that could escape the output directory is rejected rather than passed along.
+ */
+export const SPRITE_GROUP_NAME_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_-]*$/;
+
+export function isValidSpriteGroupName(name: string): boolean {
+  return SPRITE_GROUP_NAME_PATTERN.test(name);
+}
 
 /**
  * Webpack-like rule condition: a substring, a `RegExp`, a predicate, or an any-of list.
@@ -131,9 +141,10 @@ export function matchesRule(rule: VariantRule, resource: string): boolean {
 /**
  * True when `resource` is a file inside `packageName` (or any name in the list).
  *
- * Resolves `packageName/package.json` from `resource`'s directory so an app-level
- * webpack config can target `@myorg/app-nav` even when webpack realpaths a
- * workspace symlink to `packages/app-nav`.
+ * Resolves the package from `resource`'s directory so an app-level webpack config can
+ * target `@myorg/app-nav` even when webpack realpaths a workspace symlink to
+ * `packages/app-nav`. A package that cannot be resolved from that directory simply does
+ * not match.
  */
 export function matchPackage(packageName: string | string[], resource: string): boolean {
   const names = Array.isArray(packageName) ? packageName : [packageName];
@@ -141,23 +152,77 @@ export function matchPackage(packageName: string | string[], resource: string): 
 }
 
 function matchOnePackage(packageName: string, resource: string): boolean {
-  let pkgJson: string;
-  try {
-    pkgJson = require.resolve(`${packageName}/package.json`, { paths: [dirname(resource)] });
-  } catch {
-    return false;
-  }
-
-  const roots = pathCandidates(dirname(pkgJson));
-  const files = pathCandidates(resource);
-  for (const file of files) {
-    for (const root of roots) {
-      if (file === root || file.startsWith(`${root}/`)) {
-        return true;
+  const roots = packageRootsFrom(packageName, dirname(resource));
+  if (roots.length > 0) {
+    const files = pathCandidates(resource);
+    for (const file of files) {
+      for (const root of roots) {
+        if (file === root || file.startsWith(`${root}/`)) {
+          return true;
+        }
       }
     }
   }
-  return false;
+
+  // The package may be unresolvable from here (a strict `exports` map with no entry we can
+  // reach, or a dependency of a dependency) while the file itself is plainly inside it.
+  return normalizePath(resource).includes(`/node_modules/${packageName}/`);
+}
+
+/** Resolution is filesystem work repeated for every file in a directory, so it is memoized. */
+const packageRootsCache = new Map<string, readonly string[]>();
+
+function packageRootsFrom(packageName: string, fromDir: string): readonly string[] {
+  const cacheKey = `${packageName}\u0000${fromDir}`;
+  const cached = packageRootsCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const root = findPackageRoot(packageName, fromDir);
+  const roots = root ? pathCandidates(root) : [];
+  packageRootsCache.set(cacheKey, roots);
+  return roots;
+}
+
+function findPackageRoot(packageName: string, fromDir: string): string | undefined {
+  const paths = [fromDir];
+
+  try {
+    return dirname(require.resolve(`${packageName}/package.json`, { paths }));
+  } catch {
+    // Packages whose `exports` map omits `./package.json` land here.
+  }
+
+  let entry: string;
+  try {
+    entry = require.resolve(packageName, { paths });
+  } catch {
+    return undefined;
+  }
+
+  return findOwningPackageDir(entry, packageName);
+}
+
+/** Walks up from a resolved entry file to the directory whose manifest declares `packageName`. */
+function findOwningPackageDir(entry: string, packageName: string): string | undefined {
+  let dir = dirname(entry);
+
+  for (let parent = dirname(dir); ; dir = parent, parent = dirname(dir)) {
+    const manifest = join(dir, 'package.json');
+    if (existsSync(manifest)) {
+      try {
+        if (JSON.parse(readFileSync(manifest, 'utf8')).name === packageName) {
+          return dir;
+        }
+      } catch {
+        // An unreadable or nested helper manifest: keep walking up.
+      }
+    }
+    if (parent === dir) {
+      return undefined;
+    }
+  }
 }
 
 function pathCandidates(filePath: string): string[] {

@@ -1,3 +1,5 @@
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
 import { dirname, join } from 'path';
 
 import { describe, expect, it } from 'vitest';
@@ -71,7 +73,44 @@ describe('matchRuleCondition / findMatchingRule', () => {
     expect(findMatchingRule(viaSourceTree, rules)?.sprite).toBe('critical');
     expect(findMatchingRule('/tmp/other-app/src/index.ts', rules)).toBeUndefined();
   });
+
+  // `require.resolve('<pkg>/package.json')` throws ERR_PACKAGE_PATH_NOT_EXPORTED for these,
+  // which used to make the rule silently match nothing.
+  it('matches a package whose exports map does not expose ./package.json', () => {
+    const { linkedFile, realFile, name } = createWorkspacePackageFixture();
+    const rules = [{ package: name, iconVariant: 'fonts' as const }];
+
+    expect(findMatchingRule(linkedFile, rules)?.iconVariant).toBe('fonts');
+    // webpack reports the symlink realpath, which is outside node_modules entirely.
+    expect(findMatchingRule(realFile, rules)?.iconVariant).toBe('fonts');
+  });
 });
+
+/**
+ * A yarn/pnpm workspace layout: the real package lives outside `node_modules` and is linked
+ * into it, and its `exports` map has no `./package.json` entry.
+ */
+function createWorkspacePackageFixture(): { linkedFile: string; realFile: string; name: string } {
+  const name = '@fluentui-test/app-nav';
+  const root = mkdtempSync(join(tmpdir(), 'fluent-variant-rules-'));
+  const packageRoot = join(root, 'packages', 'app-nav');
+
+  mkdirSync(join(packageRoot, 'src'), { recursive: true });
+  writeFileSync(
+    join(packageRoot, 'package.json'),
+    JSON.stringify({ name, version: '1.0.0', exports: { '.': './src/index.js' } }),
+  );
+  writeFileSync(join(packageRoot, 'src', 'index.js'), 'module.exports = {};\n');
+
+  mkdirSync(join(root, 'node_modules', '@fluentui-test'), { recursive: true });
+  symlinkSync(packageRoot, join(root, 'node_modules', name), 'dir');
+
+  return {
+    linkedFile: join(root, 'node_modules', name, 'src', 'Nav.tsx'),
+    realFile: join(packageRoot, 'src', 'Nav.tsx'),
+    name,
+  };
+}
 
 describe('resolveFileDefaults + import override', () => {
   it('layers import query over the first matching rule over the global default', () => {
