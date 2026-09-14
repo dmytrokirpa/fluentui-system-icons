@@ -23,7 +23,16 @@ export const ATOMS_SVG_SPRITE_DIR_PATTERN = /(^|[\/\\])atoms[\/\\]svg-sprite([\/
 
 export type SvgSpriteOptimizationMode = 'atomic' | 'merged';
 
-export type SharedSymbolsPolicy = 'duplicate' | 'hoist';
+/**
+ * Group names end up in emitted asset filenames and reach the plugin from `?sprite=`
+ * queries in application source, so they are restricted to characters that cannot
+ * escape the output directory.
+ */
+export const SPRITE_GROUP_NAME_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_-]*$/;
+
+export function isValidSpriteGroupName(name: string): boolean {
+  return SPRITE_GROUP_NAME_PATTERN.test(name);
+}
 
 export interface SpriteGroupOptions {
   inline?: boolean;
@@ -104,29 +113,21 @@ export function mergeSprites(spriteResourceToIds: Map<string, Set<string>>): str
   return wrapSymbolsInSvg(Array.from(mergedSymbolsById.values()));
 }
 
-/** @deprecated Use {@link mergeSprites}. */
-export const buildMergedSprite = mergeSprites;
-
 export interface SpriteGroupUsage {
   /** group → sprite resource path → symbol ids */
   groups: Map<string, Map<string, Set<string>>>;
-  /** Symbol ids that appear in more than one group (after policy). */
+  /** Symbol ids that appear in more than one group. */
   duplicatedIds: string[];
 }
 
 /**
  * Buckets per-resource symbol usage into named sprite groups.
  *
- * - `'duplicate'` (default): an icon used in two groups is emitted in both.
- * - `'hoist'`: symbols that appear in any `inlinedGroups` entry are dropped from
- *   every other group. Runtime URL rewriting so those atoms point at the inlined
- *   sprite is the plugin's job; this helper only shapes the symbol sets.
+ * An icon used in two groups is emitted in both: each group resolves to a single
+ * sprite URL for every atom it contains, so a symbol cannot be served to one group
+ * out of another group's file.
  */
-export function groupSymbols(
-  usage: Map<string, Map<string, Set<string>>>,
-  policy: SharedSymbolsPolicy = 'duplicate',
-  inlinedGroups: ReadonlySet<string> = new Set(),
-): SpriteGroupUsage {
+export function groupSymbols(usage: Map<string, Map<string, Set<string>>>): SpriteGroupUsage {
   const groups = new Map<string, Map<string, Set<string>>>();
 
   for (const [group, spriteResourceToIds] of usage) {
@@ -135,28 +136,6 @@ export function groupSymbols(
       clone.set(resource, new Set(ids));
     }
     groups.set(group, clone);
-  }
-
-  if (policy === 'hoist' && inlinedGroups.size > 0) {
-    const hoistedIds = new Set<string>();
-    for (const group of inlinedGroups) {
-      const resources = groups.get(group);
-      if (!resources) continue;
-      for (const ids of resources.values()) {
-        for (const id of ids) {
-          hoistedIds.add(id);
-        }
-      }
-    }
-
-    for (const [group, resources] of groups) {
-      if (inlinedGroups.has(group)) continue;
-      for (const ids of resources.values()) {
-        for (const id of hoistedIds) {
-          ids.delete(id);
-        }
-      }
-    }
   }
 
   return { groups, duplicatedIds: findDuplicatedSymbolIds(groups) };
@@ -181,13 +160,21 @@ export function findDuplicatedSymbolIds(groups: Map<string, Map<string, Set<stri
     .sort();
 }
 
+/**
+ * Reads `?sprite=<group>` from a resource query. A group name that could escape the
+ * output directory once interpolated into a filename is ignored, so the import falls
+ * back to the default group instead of writing outside `output.path`.
+ */
 export function parseSpriteGroupFromQuery(resourceQuery: string | undefined | null): string | undefined {
   if (!resourceQuery) {
     return undefined;
   }
   const trimmed = resourceQuery.startsWith('?') ? resourceQuery.slice(1) : resourceQuery;
   const sprite = new URLSearchParams(trimmed).get('sprite');
-  return sprite || undefined;
+  if (!sprite || !isValidSpriteGroupName(sprite)) {
+    return undefined;
+  }
+  return sprite;
 }
 
 export function resourceQueryFromResource(resource: string | undefined | null): string {

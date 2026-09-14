@@ -126,7 +126,16 @@ export interface BundlerCompiler {
       PROCESS_ASSETS_STAGE_OPTIMIZE: number;
       PROCESS_ASSETS_STAGE_OPTIMIZE_INLINE?: number;
     };
-    sources: { RawSource: new (value: string | Buffer, ...rest: any[]) => BundlerSource };
+    sources: {
+      RawSource: new (value: string | Buffer, ...rest: any[]) => BundlerSource;
+      /**
+       * Optional: lets the sprite plugin patch an asset without discarding its source map.
+       * The argument is always a source the bundler itself produced, hence `any`.
+       */
+      ReplaceSource?: new (source: any, name?: string) => BundlerSource & {
+        replace(start: number, end: number, value: string, name?: string): void;
+      };
+    };
     util?: {
       createHash(algorithm: any): { update(data: string | Buffer): void; digest(encoding: string): string | Buffer };
     };

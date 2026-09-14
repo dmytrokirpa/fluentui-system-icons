@@ -42,9 +42,6 @@
           "filename": { "type": "string" }
         }
       }
-    },
-    "sharedSymbols": {
-      "enum": ["duplicate", "hoist"]
     }
   }
 }

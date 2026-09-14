@@ -13,6 +13,15 @@ const { parseArgs } = require('node:util');
 
 const BUNDLERS = /** @type {const} */ (['webpack', 'rspack']);
 
+/** Every knob `make-configs.js` reads, so a scenario starts from a known environment. */
+const SCENARIO_ENV_KEYS = [
+  'SVG_SPRITE_MODE',
+  'SVG_SPRITE_INJECT',
+  'SVG_SPRITE_MANIFEST',
+  'SVG_SPRITE_MERGED_FILENAME',
+  'SVG_SPRITE_GROUPS',
+];
+
 /** @type {{ env: Record<string, string>, label: string }[]} */
 const SCENARIOS = [
   { label: 'atomic', env: {} },
@@ -24,6 +33,7 @@ const SCENARIOS = [
   { label: 'inline', env: { SVG_SPRITE_INJECT: 'inline' } },
   { label: 'reference', env: { SVG_SPRITE_MODE: 'merged', SVG_SPRITE_INJECT: 'reference' } },
   { label: 'groups', env: { SVG_SPRITE_GROUPS: '1', SVG_SPRITE_INJECT: 'inline' } },
+  { label: 'groups-mixed', env: { SVG_SPRITE_GROUPS: 'mixed' } },
 ];
 
 main();
@@ -46,19 +56,12 @@ async function main() {
  * @param {{ env: Record<string, string>, label: string }} scenario
  */
 function runScenario(bundler, scenario) {
-  const previous = { ...scenario.env };
-  for (const key of Object.keys(scenario.env)) {
-    process.env[key] = scenario.env[key];
-  }
-  // Clear env keys that this scenario does not set so they don't leak across runs.
-  for (const key of [
-    'SVG_SPRITE_MODE',
-    'SVG_SPRITE_INJECT',
-    'SVG_SPRITE_MANIFEST',
-    'SVG_SPRITE_MERGED_FILENAME',
-    'SVG_SPRITE_GROUPS',
-  ]) {
-    if (!(key in scenario.env)) {
+  // Every scenario owns the full set of knobs: set the ones it declares, clear the rest so
+  // nothing leaks from the previous scenario in this process.
+  for (const key of SCENARIO_ENV_KEYS) {
+    if (key in scenario.env) {
+      process.env[key] = scenario.env[key];
+    } else {
       delete process.env[key];
     }
   }
@@ -72,11 +75,6 @@ function runScenario(bundler, scenario) {
 
   return new Promise((resolvePromise, rejectPromise) => {
     compilerFactory(config, (err, stats) => {
-      for (const [key, value] of Object.entries(previous)) {
-        if (value === undefined) {
-          delete process.env[key];
-        }
-      }
       if (err) {
         rejectPromise(err);
         return;

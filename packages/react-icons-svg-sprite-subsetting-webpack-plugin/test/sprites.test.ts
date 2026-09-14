@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
+
 import {
   extractSymbols,
   findDuplicatedSymbolIds,
   getModuleResourceQuery,
   groupSymbols,
+  isValidSpriteGroupName,
+  parseSpriteGroupFromQuery,
+  resolveSpriteFilename,
   subsetSpriteSvg,
   wrapSymbolsInSvg,
 } from '../src/sprites';
@@ -60,19 +66,52 @@ describe('groupSymbols', () => {
     ]);
   };
 
-  it('duplicates shared symbols by default', () => {
-    const { groups, duplicatedIds } = groupSymbols(usage(), 'duplicate');
+  it('keeps a shared symbol in every group that uses it and reports it', () => {
+    const { groups, duplicatedIds } = groupSymbols(usage());
     expect(groups.get('critical')?.get('/sprites/backpack.svg')).toEqual(new Set(['BackpackFilled']));
     expect(groups.get('grid')?.get('/sprites/backpack.svg')).toEqual(new Set(['BackpackFilled']));
     expect(duplicatedIds).toEqual(['BackpackFilled']);
   });
 
-  it('hoists symbols that live in an inlined group out of the others', () => {
-    const { groups, duplicatedIds } = groupSymbols(usage(), 'hoist', new Set(['critical']));
-    expect(groups.get('critical')?.get('/sprites/backpack.svg')).toEqual(new Set(['BackpackFilled']));
-    expect(groups.get('grid')?.get('/sprites/backpack.svg')?.size).toBe(0);
-    expect(groups.get('grid')?.get('/sprites/calculator.svg')).toEqual(new Set(['CalculatorFilled']));
-    expect(duplicatedIds).toEqual([]);
+  it('does not mutate the usage it was given', () => {
+    const original = usage();
+    groupSymbols(original).groups.get('grid')?.get('/sprites/backpack.svg')?.clear();
+    expect(original.get('grid')?.get('/sprites/backpack.svg')).toEqual(new Set(['BackpackFilled']));
+  });
+});
+
+describe('sprite group names', () => {
+  it('accepts plain names and rejects anything that could escape the output directory', () => {
+    expect(isValidSpriteGroupName('critical')).toBe(true);
+    expect(isValidSpriteGroupName('route_grid-2')).toBe(true);
+    expect(isValidSpriteGroupName('../../pwned')).toBe(false);
+    expect(isValidSpriteGroupName('nested/group')).toBe(false);
+    expect(isValidSpriteGroupName('-leading-dash')).toBe(false);
+    expect(isValidSpriteGroupName('')).toBe(false);
+  });
+
+  it('ignores an unusable group in a resource query instead of building a filename from it', () => {
+    expect(parseSpriteGroupFromQuery('?sprite=critical')).toBe('critical');
+    expect(parseSpriteGroupFromQuery('?sprite=../../pwned')).toBeUndefined();
+    expect(resolveSpriteFilename('[name].[contenthash].sprite.svg', { name: 'critical', contentHash: 'abc' })).toBe(
+      'critical.abc.sprite.svg',
+    );
+  });
+});
+
+describe('bundler-api copies', () => {
+  // The two plugins deliberately keep their own copy so neither depends on the other; this
+  // fails the moment one copy is updated without the other.
+  it('are identical apart from the sibling package named in the header', () => {
+    const read = (pkg: string) =>
+      readFileSync(resolve(__dirname, `../../${pkg}/src/bundler-api.ts`), 'utf8').replace(
+        /^ \* Copied into this package and .*$/m,
+        '',
+      );
+
+    expect(read('react-icons-svg-sprite-subsetting-webpack-plugin')).toBe(
+      read('react-icons-font-subsetting-webpack-plugin'),
+    );
   });
 });
 

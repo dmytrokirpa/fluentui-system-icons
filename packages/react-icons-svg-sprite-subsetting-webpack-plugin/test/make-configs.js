@@ -20,18 +20,17 @@ function createConfig(adapter) {
   const generateManifest = process.env.SVG_SPRITE_MANIFEST === '1';
   const mergedSpriteFilename = process.env.SVG_SPRITE_MERGED_FILENAME;
   const isGroups = process.env.SVG_SPRITE_GROUPS === '1';
-  const entryName = isGroups ? 'groups' : isMerged ? 'merged' : 'atomic';
+  // A group alongside plain (ungrouped) sprite imports, with no `sprites` option.
+  const isMixedGroups = process.env.SVG_SPRITE_GROUPS === 'mixed';
+  const modeName = isGroups ? 'groups' : isMixedGroups ? 'groups-mixed' : isMerged ? 'merged' : 'atomic';
+  const entryName = isGroups ? 'groups' : isMixedGroups ? 'groupsMixed' : isMerged ? 'merged' : 'atomic';
   const hasHtmlInjection = injectMode === 'inline' || injectMode === 'reference' || isGroups;
 
-  const distName = `${adapter.name}-${isGroups ? 'groups' : isMerged ? 'merged' : 'atomic'}${
-    injectMode ? `-${injectMode}` : ''
-  }${generateManifest ? '-manifest' : ''}`;
+  const distName = `${adapter.name}-${modeName}${injectMode ? `-${injectMode}` : ''}${
+    generateManifest ? '-manifest' : ''
+  }`;
 
-  console.log(
-    `Running svg-sprite subsetting test (${adapter.name}) in ${
-      isGroups ? 'groups' : isMerged ? 'merged' : 'atomic'
-    } mode`,
-  );
+  console.log(`Running svg-sprite subsetting test (${adapter.name}) in ${modeName} mode`);
 
   return {
     context: __dirname,
@@ -55,9 +54,11 @@ function createConfig(adapter) {
     },
     entry: isGroups
       ? { groups: './src/groups.js' }
-      : isMerged
-        ? { merged: './src/merged.js' }
-        : { atomic: './src/atomic.js' },
+      : isMixedGroups
+        ? { groupsMixed: './src/groups-mixed.js' }
+        : isMerged
+          ? { merged: './src/merged.js' }
+          : { atomic: './src/atomic.js' },
     output: {
       path: resolve(__dirname, 'dist', distName),
       filename: '[name].js',
@@ -72,10 +73,11 @@ function createConfig(adapter) {
                 critical: { inline: true },
                 grid: { inline: false, prefetch: true, filename: 'grid.[contenthash].sprite.svg' },
               },
-              sharedSymbols: 'duplicate',
               injectSpritesInTemplates: true,
             }
-          : {
+          : isMixedGroups
+            ? {}
+            : {
               mode: isMerged ? 'merged' : 'atomic',
               mergedSpriteFilename: isMerged ? mergedSpriteFilename || 'fluentui-react-icons.svg' : undefined,
               generateSpritesManifest: generateManifest,
@@ -99,6 +101,37 @@ function createConfig(adapter) {
               .map((a) => a.name)
               .filter((name) => name.endsWith('.svg'))
               .map((name) => ({ name, source: readFileSync(join(outDir, name), 'utf8') }));
+
+            if (isMixedGroups) {
+              // A grouped import must not stop the ungrouped ones from being subset, and it
+              // must not produce a merged sprite for the default group that nothing loads.
+              const critical = svgAssets.find((a) => /^critical\.[a-f0-9]+\.sprite\.svg$/.test(a.name));
+              if (!critical) {
+                throw new Error(`[${adapter.name}/groups-mixed] critical sprite was not emitted`);
+              }
+              if (!critical.source.includes('id="BackpackFilled"')) {
+                throw new Error(`[${adapter.name}/groups-mixed] critical sprite missing BackpackFilled`);
+              }
+              const calculator = svgAssets.find((a) => a.name.startsWith('calculator-'));
+              if (!calculator) {
+                throw new Error(`[${adapter.name}/groups-mixed] ungrouped calculator sprite was not emitted`);
+              }
+              if (calculator.source.includes('id="CalculatorRegular"')) {
+                throw new Error(
+                  `[${adapter.name}/groups-mixed] ungrouped sprite was not subset to the used symbols`,
+                );
+              }
+              const orphan = svgAssets.find((a) => a.name === 'fluentui-react-icons.svg');
+              if (orphan) {
+                throw new Error(`[${adapter.name}/groups-mixed] emitted an unreferenced merged sprite`);
+              }
+              const js = readFileSync(join(outDir, 'groupsMixed.js'), 'utf8');
+              if (!js.includes(critical.name)) {
+                throw new Error(`[${adapter.name}/groups-mixed] bundle does not reference the critical sprite URL`);
+              }
+              console.log(`  ✓ ${adapter.name}/groups-mixed: all assertions passed`);
+              return;
+            }
 
             if (isGroups) {
               const html = readFileSync(join(outDir, 'index.html'), 'utf8');

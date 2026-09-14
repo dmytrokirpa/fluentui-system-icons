@@ -17,17 +17,19 @@ import {
   groupSymbols,
   injectIntoBody,
   injectIntoHead,
+  isValidSpriteGroupName,
   mergeSprites,
   parseSpriteGroupFromQuery,
   resolveSpriteFilename,
   resolveSpriteGroup,
   resourceQueryFromResource,
   getModuleResourceQuery,
+  SPRITE_URL_PLACEHOLDER_PREFIX,
   spriteUrlPlaceholder,
   stripXmlDeclaration,
   subsetSpriteSvg,
 } from './sprites';
-import type { SharedSymbolsPolicy, SpriteGroupOptions, SvgSpriteOptimizationMode } from './sprites';
+import type { SpriteGroupOptions, SvgSpriteOptimizationMode } from './sprites';
 import type {
   BundlerCompilation,
   BundlerCompiler,
@@ -50,7 +52,7 @@ const SPRITE_URL_EMPTY = resolve(__dirname, 'runtime/empty.js');
 type InjectSpritesInTemplatesMode = 'inline' | 'reference';
 type InjectSpritesInTemplatesOptions = false | { mode: InjectSpritesInTemplatesMode };
 
-export type { SvgSpriteOptimizationMode, SharedSymbolsPolicy, SpriteGroupOptions };
+export type { SvgSpriteOptimizationMode, SpriteGroupOptions };
 
 export interface FluentUIReactIconsSvgSpriteSubsettingPluginOptions {
   /**
@@ -87,15 +89,12 @@ export interface FluentUIReactIconsSvgSpriteSubsettingPluginOptions {
    *
    * When this option is set, or when any svg-sprite import carries a `?sprite=` query,
    * the plugin emits one merged sprite per group instead of a single app-wide sprite.
+   *
+   * An icon used from two groups is emitted in both (and warned about): every atom in a
+   * group resolves to that group's single sprite URL, so a symbol cannot be served to one
+   * group out of another group's file.
    */
   sprites?: Record<string, SpriteGroupOptions>;
-
-  /**
-   * What to do when the same symbol is used in more than one group.
-   * `'duplicate'` (default) ships it in every group and warns.
-   * `'hoist'` drops it from non-inlined groups when it already lives in an inlined group.
-   */
-  sharedSymbols?: SharedSymbolsPolicy;
 }
 
 interface NormalizedOptions {
@@ -105,7 +104,6 @@ interface NormalizedOptions {
   generateSpritesManifest: boolean;
   injectSpritesInTemplates: InjectSpritesInTemplatesOptions;
   sprites?: Record<string, SpriteGroupOptions>;
-  sharedSymbols: SharedSymbolsPolicy;
 }
 
 interface ResolvedGroupConfig {
@@ -131,7 +129,7 @@ export default class FluentUIReactIconsSvgSpriteSubsettingPlugin implements Bund
     }
 
     let currentCompilation: BundlerCompilation | undefined;
-    let spriteGroupByRequest = new Map<string, string>();
+    let spriteGroupByRequest = new SpriteGroupRequestIndex();
 
     compiler.hooks.normalModuleFactory.tap(PLUGIN_NAME, (normalModuleFactory) => {
       normalModuleFactory.hooks.beforeResolve.tap(PLUGIN_NAME, (resolveData) => {
@@ -150,50 +148,51 @@ export default class FluentUIReactIconsSvgSpriteSubsettingPlugin implements Bund
 
     compiler.hooks.compilation.tap(PLUGIN_NAME, (compilation) => {
       currentCompilation = compilation;
-      spriteGroupByRequest = new Map();
+      spriteGroupByRequest = new SpriteGroupRequestIndex();
 
       const { Compilation, sources } = compiler.webpack;
       const RawSource = sources.RawSource;
 
       let groupToResourceToIds: Map<string, Map<string, Set<string>>> | null = null;
+      let groupToEntrypointNames: Map<string, Set<string>> | null = null;
       let entrypointToSpriteResourceToIds: Map<string, Map<string, Set<string>>> | null = null;
       let spriteResourceToAssetName: Map<string, string> | null = null;
+      /** Groups whose atoms resolve through a generated URL module instead of their own `.svg` asset. */
+      let urlModuleGroups: Set<string> | null = null;
+      let spritesBuilt = false;
       const groupToAssetName = new Map<string, string>();
       const groupToSvg = new Map<string, string>();
+      const injectedInlineGroups = new Set<string>();
 
       const ensureUsage = () => {
-        if (!groupToResourceToIds || !entrypointToSpriteResourceToIds) {
+        if (!groupToResourceToIds || !entrypointToSpriteResourceToIds || !groupToEntrypointNames) {
           const collected = collectSpriteUsage(compilation);
           groupToResourceToIds = collected.groups;
+          groupToEntrypointNames = collected.groupEntrypoints;
           entrypointToSpriteResourceToIds = collected.entrypoints;
         }
         if (!spriteResourceToAssetName) {
           spriteResourceToAssetName = getSpriteResourceToAssetName(compilation, compiler.context);
         }
+        if (!urlModuleGroups) {
+          urlModuleGroups = collectUrlModuleGroups(compilation);
+        }
       };
 
       const ensureGroupSprites = () => {
-        if (groupToSvg.size > 0 || groupToAssetName.size > 0) {
+        if (spritesBuilt) {
           return;
         }
+        spritesBuilt = true;
         ensureUsage();
         const grouped = isGroupedMode(this.options, groupToResourceToIds ?? new Map());
-        const inlinedGroups = new Set<string>();
-        for (const group of (groupToResourceToIds ?? new Map()).keys()) {
-          if (resolveGroupConfig(group, this.options).inline) {
-            inlinedGroups.add(group);
-          }
-        }
+        const { groups, duplicatedIds } = groupSymbols(groupToResourceToIds ?? new Map());
 
-        const { groups, duplicatedIds } = grouped
-          ? groupSymbols(groupToResourceToIds ?? new Map(), this.options.sharedSymbols, inlinedGroups)
-          : { groups: groupToResourceToIds ?? new Map(), duplicatedIds: [] as string[] };
-
-        if (duplicatedIds.length > 0 && this.options.sharedSymbols === 'duplicate') {
+        if (grouped && duplicatedIds.length > 0) {
           compilation.warnings.push(
             new Error(
-              `${PLUGIN_NAME}: ${duplicatedIds.length} icon(s) appear in more than one sprite group and were duplicated (${this.options.sharedSymbols}). ` +
-                `Duplicated ids: ${duplicatedIds.join(', ')}. Set sharedSymbols: 'hoist' to keep inlined copies only.`,
+              `${PLUGIN_NAME}: ${duplicatedIds.length} icon(s) are used from more than one sprite group and are emitted in each of them. ` +
+                `Duplicated ids: ${duplicatedIds.join(', ')}. Move the shared icons into a single group to avoid the extra bytes.`,
             ),
           );
         }
@@ -201,17 +200,22 @@ export default class FluentUIReactIconsSvgSpriteSubsettingPlugin implements Bund
         const fullHash = compilation.fullHash ?? compilation.hash ?? '';
 
         for (const [group, resourceToIds] of groups) {
-          const config = resolveGroupConfig(group, this.options);
-          const shouldEmitMerged = grouped || this.options.mode === 'merged' || config.inline;
-          if (!shouldEmitMerged) {
-            continue;
-          }
-          if (resourceToIds.size === 0) {
+          // A group whose atoms still import their own `.svg` asset is served by atomic
+          // subsetting; merging it here would emit a sprite nothing references.
+          if (!urlModuleGroups?.has(group) || resourceToIds.size === 0) {
             continue;
           }
 
           const svg = mergeSprites(resourceToIds);
           groupToSvg.set(group, svg);
+
+          const config = resolveGroupConfig(group, this.options);
+          // An inlined group lives in the HTML document; the ungrouped merged path keeps
+          // emitting a file as well, because that is what it has always done.
+          if (config.inline && grouped) {
+            continue;
+          }
+
           const contentHash = createContentHash(compiler, compilation, svg);
           const assetName = resolveSpriteFilename(config.filename, {
             name: group,
@@ -241,7 +245,13 @@ export default class FluentUIReactIconsSvgSpriteSubsettingPlugin implements Bund
 
         const grouped = isGroupedMode(this.options, groupToResourceToIds ?? new Map());
         if (grouped) {
-          return injectGroupedSprites(html, data, compilation, groupToSvg, groupToAssetName, this.options);
+          return injectGroupedSprites(html, data, compilation, {
+            groupToSvg,
+            groupToAssetName,
+            groupToEntrypointNames: groupToEntrypointNames ?? new Map(),
+            options: this.options,
+            injectedInlineGroups,
+          });
         }
 
         return injectLegacySprites(
@@ -258,35 +268,25 @@ export default class FluentUIReactIconsSvgSpriteSubsettingPlugin implements Bund
 
       tapAssets(Compilation.PROCESS_ASSETS_STAGE_OPTIMIZE, () => {
         ensureUsage();
+        ensureGroupSprites();
         const grouped = isGroupedMode(this.options, groupToResourceToIds ?? new Map());
 
-        if (grouped || this.options.mode === 'merged') {
-          ensureGroupSprites();
-          for (const [group, svg] of groupToSvg) {
-            const config = resolveGroupConfig(group, this.options);
-            if (config.inline && grouped) {
-              // Inlined groups live in HTML; skip emitting a fetchable asset unless something
-              // still references it (legacy merged+inline still emitted a file — keep that
-              // only for the ungrouped merged path).
-              continue;
-            }
-            const assetName = groupToAssetName.get(group);
-            if (!assetName) continue;
-            const source = new RawSource(svg);
-            if (compilation.getAsset(assetName)) {
-              compilation.updateAsset(assetName, source);
-            } else {
-              compilation.emitAsset(assetName, source);
-            }
+        for (const [group, svg] of groupToSvg) {
+          const assetName = groupToAssetName.get(group);
+          if (!assetName) continue;
+          const source = new RawSource(svg);
+          if (compilation.getAsset(assetName)) {
+            compilation.updateAsset(assetName, source);
+          } else {
+            compilation.emitAsset(assetName, source);
           }
-        } else {
-          subsetAtomicSprites(
-            compilation,
-            spriteResourceToAssetName ?? new Map(),
-            combineSpriteUsage(entrypointToSpriteResourceToIds ?? new Map()),
-            RawSource,
-          );
         }
+
+        // Groups left out of the merged sprites above still reference their own `.svg`
+        // assets, so they are subset in place. This keeps a build that mixes grouped and
+        // ungrouped imports from shipping full sprites for the ungrouped ones.
+        const atomicUsage = collectUngroupedUsage(groupToResourceToIds ?? new Map(), urlModuleGroups ?? new Set());
+        subsetAtomicSprites(compilation, spriteResourceToAssetName ?? new Map(), atomicUsage, RawSource);
 
         if (this.options.generateSpritesManifest) {
           const manifest = buildSpritesManifest(
@@ -301,18 +301,45 @@ export default class FluentUIReactIconsSvgSpriteSubsettingPlugin implements Bund
 
       const inlineStage = Compilation.PROCESS_ASSETS_STAGE_OPTIMIZE_INLINE ?? 700;
       tapAssets(inlineStage, () => {
-        if (groupToAssetName.size === 0) {
-          ensureGroupSprites();
-        }
-        replaceSpriteUrlPlaceholders(compilation, groupToAssetName, RawSource);
+        ensureGroupSprites();
+        replaceSpriteUrlPlaceholders(compiler, compilation, groupToAssetName, PLUGIN_NAME);
+        warnAboutUninjectedInlineGroups(compilation, groupToSvg, injectedInlineGroups, this.options);
       });
     });
   }
 }
 
+/**
+ * Remembers which sprite group an atom request belongs to, keyed by request path and by
+ * bare filename. The filename key is a fallback for bundlers that drop the issuer's
+ * `?sprite=` query before `beforeResolve`; a key claimed by two different groups is
+ * dropped rather than resolved arbitrarily.
+ */
+class SpriteGroupRequestIndex {
+  private readonly byKey = new Map<string, string>();
+  private readonly ambiguous = new Set<string>();
+
+  set(key: string, group: string): void {
+    if (this.ambiguous.has(key)) {
+      return;
+    }
+    const existing = this.byKey.get(key);
+    if (existing !== undefined && existing !== group) {
+      this.byKey.delete(key);
+      this.ambiguous.add(key);
+      return;
+    }
+    this.byKey.set(key, group);
+  }
+
+  get(key: string | undefined): string | undefined {
+    return key === undefined ? undefined : this.byKey.get(key);
+  }
+}
+
 function recordSpriteGroupFromResolveRequest(
   resolveData: BundlerResolveData,
-  spriteGroupByRequest: Map<string, string>,
+  spriteGroupByRequest: SpriteGroupRequestIndex,
 ): void {
   if (!resolveData || typeof resolveData.request !== 'string') {
     return;
@@ -344,7 +371,7 @@ function rewriteSpriteSvgImport(
   resolveData: BundlerResolveData,
   compilation: BundlerCompilation,
   options: NormalizedOptions,
-  spriteGroupByRequest: Map<string, string>,
+  spriteGroupByRequest: SpriteGroupRequestIndex,
 ): void {
   if (!resolveData || typeof resolveData.request !== 'string') {
     return;
@@ -360,7 +387,7 @@ function rewriteSpriteSvgImport(
     return;
   }
 
-  const issuerQuery = getIssuerResourceQuery(compilation, resolveData);
+  const issuerQuery = getIssuerResourceQuery(resolveData);
   const groupFromIssuer = parseSpriteGroupFromQuery(issuerQuery);
   const groupFromRequest = parseSpriteGroupFromQuery(requestQuery);
   const issuerPath = resolveData.contextInfo?.issuer?.split('?')[0];
@@ -443,7 +470,7 @@ interface SpriteParser {
   state: { current?: BundlerModule; module?: BundlerModule };
 }
 
-function getIssuerResourceQuery(_compilation: BundlerCompilation, resolveData: BundlerResolveData): string {
+function getIssuerResourceQuery(resolveData: BundlerResolveData): string {
   // Do not walk `compilation.modules` or `moduleGraph` here: rspack's module graph
   // is still being built during `beforeResolve` and those reads panic.
   return resourceQueryFromResource(resolveData.contextInfo?.issuer);
@@ -497,10 +524,14 @@ function normalizeOptions(options: FluentUIReactIconsSvgSpriteSubsettingPluginOp
   }
   if (options.sprites) {
     for (const [name, group] of Object.entries(options.sprites)) {
+      if (name !== '*' && !isValidSpriteGroupName(name)) {
+        throw new Error(
+          `${PLUGIN_NAME}: invalid sprite group name "${name}". Group names become asset filenames, so they may only contain letters, digits, "_" and "-".`,
+        );
+      }
       if (group?.filename) {
         assertValidSpriteFilename(group.filename, PLUGIN_NAME);
       }
-      void name;
     }
   }
 
@@ -511,7 +542,6 @@ function normalizeOptions(options: FluentUIReactIconsSvgSpriteSubsettingPluginOp
     generateSpritesManifest: options.generateSpritesManifest ?? false,
     injectSpritesInTemplates,
     sprites: options.sprites,
-    sharedSymbols: options.sharedSymbols ?? 'duplicate',
   };
 }
 
@@ -619,20 +649,32 @@ function getEntrypointNamesForHtml(compilation: BundlerCompilation, chunksOption
 
 function injectGroupedSprites(
   html: string,
-  data: { publicPath?: string },
+  data: { plugin?: { options?: { chunks?: 'all' | string[] } }; publicPath?: string },
   compilation: BundlerCompilation,
-  groupToSvg: Map<string, string>,
-  groupToAssetName: Map<string, string>,
-  options: NormalizedOptions,
+  context: {
+    groupToSvg: Map<string, string>;
+    groupToAssetName: Map<string, string>;
+    groupToEntrypointNames: Map<string, Set<string>>;
+    options: NormalizedOptions;
+    injectedInlineGroups: Set<string>;
+  },
 ): string {
+  const { groupToSvg, groupToAssetName, groupToEntrypointNames, options, injectedInlineGroups } = context;
   const publicPath = getHtmlPublicPath(compilation, data);
+  // A multi-page build gets one template per entrypoint set, so only the groups this
+  // page actually loads belong in it.
+  const pageEntrypoints = new Set(getEntrypointNamesForHtml(compilation, data.plugin?.options?.chunks));
   const headParts: string[] = [];
   let next = html;
 
   for (const [group, svg] of groupToSvg) {
+    if (!isGroupOnPage(groupToEntrypointNames.get(group), pageEntrypoints)) {
+      continue;
+    }
     const config = resolveGroupConfig(group, options);
     if (config.inline) {
       next = injectIntoBody(next, stripXmlDeclaration(svg).trim());
+      injectedInlineGroups.add(group);
       continue;
     }
     const assetName = groupToAssetName.get(group);
@@ -646,6 +688,19 @@ function injectGroupedSprites(
     next = injectIntoHead(next, headParts.join('\n'));
   }
   return next;
+}
+
+/** A group with no recorded entrypoints (nothing to attribute it to) is injected everywhere. */
+function isGroupOnPage(groupEntrypoints: Set<string> | undefined, pageEntrypoints: Set<string>): boolean {
+  if (!groupEntrypoints || groupEntrypoints.size === 0 || pageEntrypoints.size === 0) {
+    return true;
+  }
+  for (const name of groupEntrypoints) {
+    if (pageEntrypoints.has(name)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function injectLegacySprites(
@@ -728,9 +783,11 @@ function isEntrypoint(value: unknown): value is BundlerEntrypoint {
 
 function collectSpriteUsage(compilation: BundlerCompilation): {
   groups: Map<string, Map<string, Set<string>>>;
+  groupEntrypoints: Map<string, Set<string>>;
   entrypoints: Map<string, Map<string, Set<string>>>;
 } {
   const groups = new Map<string, Map<string, Set<string>>>();
+  const groupEntrypoints = new Map<string, Set<string>>();
   const entrypoints = new Map<string, Map<string, Set<string>>>();
   const entrypointRuntimeByName = new Map<string, string | string[] | ReadonlySet<string> | undefined>();
   const chunkToEntrypointNames = new Map<object, string[]>();
@@ -794,10 +851,50 @@ function collectSpriteUsage(compilation: BundlerCompilation): {
 
       add(entrypoints, entrypointName);
       add(groups, group);
+
+      const names = groupEntrypoints.get(group) ?? new Set<string>();
+      names.add(entrypointName);
+      groupEntrypoints.set(group, names);
     }
   }
 
-  return { groups, entrypoints };
+  return { groups, groupEntrypoints, entrypoints };
+}
+
+/**
+ * Groups whose atoms were redirected to a generated URL module, read back from the module
+ * graph rather than from the resolve hook so it stays correct when a rebuild serves
+ * unchanged modules from the cache.
+ */
+function collectUrlModuleGroups(compilation: BundlerCompilation): Set<string> {
+  const groups = new Set<string>();
+
+  for (const m of compilation.modules) {
+    if (!isNormalModule(m)) continue;
+    const resource = m.resource;
+    if (!resource.startsWith(SPRITE_URL_EMPTY)) continue;
+    const group = new URLSearchParams(resourceQueryFromResource(resource).replace(/^\?/, '')).get('group');
+    if (group) {
+      groups.add(group);
+    }
+  }
+
+  return groups;
+}
+
+/** Usage of the groups that still reference their own `.svg` assets, merged per sprite resource. */
+function collectUngroupedUsage(
+  groupToResourceToIds: Map<string, Map<string, Set<string>>>,
+  urlModuleGroups: ReadonlySet<string>,
+): Map<string, Set<string>> {
+  const usage = new Map<string, Map<string, Set<string>>>();
+
+  for (const [group, resourceToIds] of groupToResourceToIds) {
+    if (urlModuleGroups.has(group)) continue;
+    usage.set(group, resourceToIds);
+  }
+
+  return combineSpriteUsage(usage);
 }
 
 function getUsedExportsWithFallback(
@@ -902,14 +999,23 @@ function getModuleSource(m: BundlerNormalModule): string {
   return readFileSync(m.resource.split('?')[0], 'utf8');
 }
 
+/**
+ * Swaps each `__FLUENT_SPRITE_URL__<group>__` placeholder for the emitted sprite filename,
+ * which is only known once the sprite's content hash exists.
+ *
+ * Uses `ReplaceSource` so the surrounding chunk keeps its source map. The substitution
+ * happens after chunk hashing, so hashed JS filenames only stay in sync while
+ * `optimization.realContentHash` is on (webpack's production default) — hence the warning.
+ */
 function replaceSpriteUrlPlaceholders(
+  compiler: BundlerCompiler,
   compilation: BundlerCompilation,
   groupToAssetName: Map<string, string>,
-  RawSource: BundlerCompiler['webpack']['sources']['RawSource'],
+  pluginName: string,
 ) {
-  if (groupToAssetName.size === 0) {
-    return;
-  }
+  const { RawSource, ReplaceSource } = compiler.webpack.sources;
+  let replacedAny = false;
+  let unresolvedPlaceholder = false;
 
   for (const asset of compilation.getAssets()) {
     if (!/\.(m?js|cjs)$/.test(asset.name)) {
@@ -919,17 +1025,110 @@ function replaceSpriteUrlPlaceholders(
     if (typeof source !== 'string') {
       source = source.toString();
     }
-    let next = source;
-    for (const [group, assetName] of groupToAssetName) {
-      const placeholder = spriteUrlPlaceholder(group);
-      if (next.includes(placeholder)) {
-        next = next.split(placeholder).join(assetName);
-      }
+    if (!source.includes(SPRITE_URL_PLACEHOLDER_PREFIX)) {
+      continue;
     }
-    if (next !== source) {
+
+    const spans = findPlaceholderSpans(source, groupToAssetName);
+    if (spans.length === 0) {
+      unresolvedPlaceholder = true;
+      continue;
+    }
+
+    if (ReplaceSource) {
+      const replaced = new ReplaceSource(asset.source);
+      for (const span of spans) {
+        replaced.replace(span.start, span.end, span.value);
+      }
+      compilation.updateAsset(asset.name, replaced);
+    } else {
+      let next = source;
+      for (const [group, assetName] of groupToAssetName) {
+        next = next.split(spriteUrlPlaceholder(group)).join(assetName);
+      }
       compilation.updateAsset(asset.name, new RawSource(next));
     }
+
+    replacedAny = true;
+    unresolvedPlaceholder ||= countOccurrences(source, SPRITE_URL_PLACEHOLDER_PREFIX) > spans.length;
   }
+
+  if (unresolvedPlaceholder) {
+    compilation.warnings.push(
+      new Error(
+        `${pluginName}: the bundle references a sprite group that was never emitted, so its URL could not be resolved. ` +
+          `This usually means the group's icons were removed after the sprite was planned.`,
+      ),
+    );
+  }
+
+  if (replacedAny && shouldWarnAboutRealContentHash(compiler, compilation)) {
+    compilation.warnings.push(
+      new Error(
+        `${pluginName}: sprite URLs are substituted after chunk hashing, but optimization.realContentHash is disabled ` +
+          `while JS filenames use a hash. Emitted JS keeps its old filename when only a sprite's content changes, so a ` +
+          `long-term cache can serve a bundle pointing at a sprite that no longer exists.`,
+      ),
+    );
+  }
+}
+
+function findPlaceholderSpans(
+  source: string,
+  groupToAssetName: Map<string, string>,
+): Array<{ start: number; end: number; value: string }> {
+  const spans: Array<{ start: number; end: number; value: string }> = [];
+
+  for (const [group, assetName] of groupToAssetName) {
+    const placeholder = spriteUrlPlaceholder(group);
+    for (let at = source.indexOf(placeholder); at !== -1; at = source.indexOf(placeholder, at + placeholder.length)) {
+      spans.push({ start: at, end: at + placeholder.length - 1, value: assetName });
+    }
+  }
+
+  return spans;
+}
+
+function countOccurrences(source: string, needle: string): number {
+  let count = 0;
+  for (let at = source.indexOf(needle); at !== -1; at = source.indexOf(needle, at + needle.length)) {
+    count += 1;
+  }
+  return count;
+}
+
+function shouldWarnAboutRealContentHash(compiler: BundlerCompiler, compilation: BundlerCompilation): boolean {
+  if (compiler.options?.optimization?.realContentHash !== false) {
+    return false;
+  }
+  const templates = [compilation.outputOptions?.filename, compilation.outputOptions?.chunkFilename];
+  return templates.some((template) => typeof template === 'string' && /\[(content|chunk|full)hash/.test(template));
+}
+
+/**
+ * An inlined group's atoms render `<use href="#id">` and rely on the symbols being in the
+ * document, so a group that never reached a template renders nothing at all.
+ */
+function warnAboutUninjectedInlineGroups(
+  compilation: BundlerCompilation,
+  groupToSvg: Map<string, string>,
+  injectedInlineGroups: ReadonlySet<string>,
+  options: NormalizedOptions,
+): void {
+  const missing = Array.from(groupToSvg.keys()).filter(
+    (group) => resolveGroupConfig(group, options).inline && !injectedInlineGroups.has(group),
+  );
+  if (missing.length === 0) {
+    return;
+  }
+
+  compilation.warnings.push(
+    new Error(
+      `${PLUGIN_NAME}: sprite group(s) ${missing.join(', ')} are configured as inline but were not injected into any HTML template, ` +
+        `so their icons resolve to symbols that are not in the document. Install html-webpack-plugin (or HtmlRspackPlugin) and keep ` +
+        `injectSpritesInTemplates enabled, or drop \`inline\` for these groups.`,
+    ),
+  );
 }
 
 function buildSpritesManifest(
