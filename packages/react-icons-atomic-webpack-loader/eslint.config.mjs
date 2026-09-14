@@ -6,6 +6,7 @@ import { dependencyChecks } from '../../eslint.config.base.mjs';
 export default [
   dependencyChecks({
     ignoredDependencies: ['@rspack/core', 'webpack'],
-    ignoredFiles: ['{projectRoot}/query.d.ts', '{projectRoot}/bench/**/*'],
+    // `query.d.ts` is a shipped ambient declaration, not a module that imports anything.
+    ignoredFiles: ['{projectRoot}/query.d.ts'],
   }),
 ];
